@@ -1,0 +1,21 @@
+{
+  "name": "memory-unified",
+  "version": "1.0.0",
+  "description": "Unified memory plugin: USMD SQLite skill memory + Ruflo HNSW vector search",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.0",
+    "better-sqlite3": "^11.0.0",
+    "hnswlib-node": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}

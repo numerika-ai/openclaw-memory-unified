@@ -1,0 +1,44 @@
+{
+  "id": "memory-unified",
+  "kind": "memory",
+  "uiHints": {
+    "dbPath": {
+      "label": "USMD Database Path",
+      "sensitive": false,
+      "placeholder": "~/.openclaw/workspace/skill-memory.db",
+      "help": "Path to the USMD SQLite database. Created automatically if missing."
+    },
+    "ragSlim": {
+      "label": "RAG Slim on Agent Start",
+      "sensitive": false,
+      "help": "Inject micro-summaries (20-30 tokens) from HNSW into agent context."
+    },
+    "logToolCalls": {
+      "label": "Log Tool Calls to HNSW",
+      "sensitive": false,
+      "help": "Store every tool call in Ruflo HNSW with skill tags."
+    },
+    "trajectoryTracking": {
+      "label": "Trajectory Tracking",
+      "sensitive": false,
+      "help": "Start/end SONA trajectories on agent lifecycle for self-learning."
+    },
+    "ragTopK": {
+      "label": "RAG Top-K Results",
+      "sensitive": false,
+      "placeholder": "5",
+      "help": "Number of HNSW results to inject on agent start."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": { "type": "string" },
+      "ragSlim": { "type": "boolean" },
+      "logToolCalls": { "type": "boolean" },
+      "trajectoryTracking": { "type": "boolean" },
+      "ragTopK": { "type": "number" }
+    }
+  }
+}
