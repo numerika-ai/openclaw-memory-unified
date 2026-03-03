@@ -4,11 +4,38 @@ Unified memory layer for [OpenClaw](https://github.com/openclaw/openclaw) that m
 
 ## Features
 
-- **Dual storage:** SQLite for structured data (skills, tool calls, artifacts) + HNSW for semantic search
-- **RAG on agent start:** injects relevant micro-summaries from vector memory into context
-- **Tool call logging:** every tool invocation stored with auto-tags for trajectory analysis
-- **Skill learning:** tracks skill executions, success rates, and proposes procedure improvements
-- **Unified search:** single `unified_search` tool queries both backends simultaneously
+### Memory & Search
+- **Dual storage:** SQLite (structured) + HNSW (semantic vector search) in one plugin
+- **FTS5 full-text search:** fast keyword matching across all stored skills and entries
+- **Semantic search:** Qwen3-Embedding 4096-dim vectors via native `hnswlib-node` (no external vector DB needed)
+- **Unified search tool:** `unified_search` queries both SQL + HNSW simultaneously, merges and ranks results
+
+### RAG (Retrieval-Augmented Generation)
+- **RAG slim on agent start:** before each agent session, searches memory for context relevant to the user's message
+- **Skill procedure injection:** matched skill procedures are injected into context (the `[SKILL MATCH]` blocks you see)
+- **HNSW result injection:** top-K semantic matches from vector memory, with similarity scores
+- **Conversation thread tracking:** recent active threads summarized and injected for continuity
+
+### Skill Learning
+- **Skill execution tracking:** logs every skill use with timing, token count, success/failure status
+- **Pattern recognition:** detects recurring patterns across skill executions with confidence scoring
+- **Pattern decay:** confidence degrades over time (configurable decay rate) — stale patterns fade out
+- **Procedure proposals:** the system can propose improved procedures based on execution history
+
+### Conversation Memory
+- **Conversation threads:** groups related messages into threads with topics, tags, and status
+- **Thread lifecycle:** active → resolved → archived — queryable via `unified_conversations` tool
+- **Cross-session continuity:** conversations persist across agent restarts and session rotations
+
+### Agent Hooks
+- **`before_agent_start`** — RAG slim injection (skills + HNSW + threads + patterns)
+- **`after_tool_call`** — logs tool invocations to HNSW with auto-generated tags
+- **`agent_end`** — closes SONA trajectory with success/failure label for self-learning
+
+### Trajectory Tracking (SONA)
+- **Start/step/end lifecycle:** each agent session is a trajectory with quality-scored steps
+- **Self-learning signal:** success/failure labels feed back into skill confidence and pattern updates
+- **Ruflo MCP bridge:** optional integration with external Ruflo MCP server for advanced trajectory analysis
 
 ## Architecture
 
