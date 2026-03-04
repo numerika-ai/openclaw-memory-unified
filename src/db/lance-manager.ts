@@ -53,6 +53,10 @@ export class NativeLanceManager {
   /** Attach a SqliteVecStore for dual-write and optional search routing */
   setSqliteVecStore(store: SqliteVecStore): void {
     this.sqliteVecStore = store;
+    const envBackend = process.env.MEMORY_VECTOR_BACKEND;
+    if (envBackend === "sqlite-vec" || envBackend === "dual" || envBackend === "lancedb") {
+      this.setVectorBackend(envBackend);
+    }
   }
 
   /** Set the vector search backend: "lancedb" (default), "sqlite-vec", or "dual" */
