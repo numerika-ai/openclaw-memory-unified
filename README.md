@@ -15,16 +15,16 @@ One plugin that gives your agent:
 
 **Cost: $0/month** — uses local Qwen3-Embedding via Ollama (no OpenAI needed).
 
-## Current Architecture (v2.1)
+## Architecture (v2.2)
 
 ```
 ┌────────────────────────────────────────────────────┐
 │              memory-unified plugin                  │
 ├──────────────────────┬─────────────────────────────┤
-│  SQLite (structured) │  hnswlib-node (vectors)     │
+│  SQLite (structured) │  LanceDB (vectors)     │
 │                      │                             │
 │ • unified_entries    │ • 4096-dim Qwen3 vectors    │
-│ • skills + patterns  │ • In-memory cosine search   │
+│ • skills + patterns  │ • Disk-based columnar store   │
 │ • conversations      │ • Auto-embedded on store    │
 │ • tool_calls         │                             │
 │ • FTS5 keyword index │                             │
@@ -34,9 +34,9 @@ One plugin that gives your agent:
     (exact match)           (meaning-based)
 ```
 
-**Vector backend:** Currently `hnswlib-node` (in-memory, 103MB index).  
-**Planned migration:** LanceDB (disk-based, filtered search, delete/update).  
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for migration plan.
+**Vector backend:** LanceDB (disk-based, filtered search, delete/update).  
+  
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Entry Types
 
@@ -112,8 +112,8 @@ Add to `openclaw.json`:
 | Package | Purpose |
 |---------|---------|
 | `better-sqlite3` | SQLite database with FTS5 |
-| `hnswlib-node` | Vector index (current, being replaced) |
-| `@lancedb/lancedb` | Vector store (target, installed but not yet active) |
+
+| `@lancedb/lancedb` | Vector store (LanceDB) |
 | `@sinclair/typebox` | Schema validation |
 
 ## Docs
