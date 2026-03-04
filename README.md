@@ -121,6 +121,18 @@ Add to `openclaw.json`:
 | `sqlite-vec` | Vector search extension (v3.0, replaces LanceDB) |
 | `@sinclair/typebox` | Schema validation |
 
+## Migration Status (LanceDB → sqlite-vec)
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| **Phase 1** | Dual-write: store vectors in both LanceDB + sqlite-vec | ✅ Complete, deployed on Hermes |
+| **Phase 2** | Read from sqlite-vec, LanceDB as fallback | 🔜 Next |
+| **Phase 3** | Remove LanceDB dependency entirely | ⬜ Planned |
+
+**Key fix (2026-03-04):** sqlite-vec vec0 virtual table requires BigInt for INTEGER PRIMARY KEY — standard JavaScript Number is rejected. Fixed in commit 18f2dd2.
+
+**Test environment:** Hermes VM (OpenClaw agent on loco39) — 7/7 entries dual-written successfully.
+
 ## Docs
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — current v2.2 architecture
@@ -129,4 +141,4 @@ Add to `openclaw.json`:
 - [CUDA-SETUP.md](docs/CUDA-SETUP.md) — GPU embedding setup
 
 ---
-*Last edited by Claude Code — 2026-03-04 17:52 UTC*
+*Last edited by Wiki — 2026-03-04 20:36 UTC*
