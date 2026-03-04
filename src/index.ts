@@ -141,7 +141,7 @@ const memoryUnifiedPlugin = {
     // ========================================================================
     // Tools: Register all four tools
     // ========================================================================
-    api.registerTool(createUnifiedSearchTool(udb, null), { name: "unified_search" });
+    api.registerTool(createUnifiedSearchTool(udb, lanceManager), { name: "unified_search" });
     api.registerTool(createUnifiedStoreTool(udb, null, lanceManager), { name: "unified_store" });
     api.registerTool(createUnifiedConversationsTool(udb), { name: "unified_conversations" });
     api.registerTool(createUnifiedIndexFilesTool(udb), { name: "unified_index_files" });

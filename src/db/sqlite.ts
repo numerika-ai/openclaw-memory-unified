@@ -190,5 +190,19 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
     `).all(limit);
   }
 
+
+  // FTS5 full-text search
+  ftsSearch(query: string, entryType?: EntryType, limit = 10): any[] {
+    const ftsQuery = query.split(/\s+/).map(w => w.replace(/[^\w]/g, "")).filter(Boolean).join(" OR ");
+    if (!ftsQuery) return this.searchEntries(entryType, limit);
+    try {
+      if (entryType) {
+        return this.db.prepare("SELECT e.* FROM unified_entries e JOIN unified_fts f ON e.id = f.rowid WHERE unified_fts MATCH ? AND e.entry_type = ? ORDER BY rank LIMIT ?").all(ftsQuery, entryType, limit);
+      }
+      return this.db.prepare("SELECT e.* FROM unified_entries e JOIN unified_fts f ON e.id = f.rowid WHERE unified_fts MATCH ? ORDER BY rank LIMIT ?").all(ftsQuery, limit);
+    } catch {
+      return this.searchEntries(entryType, limit);
+    }
+  }
   close(): void { this.db.close(); }
 }

@@ -1,8 +1,9 @@
 import { Type } from "@sinclair/typebox";
-import type { ToolDef, ToolResult, RufloHNSW, UnifiedDB } from "../types";
+import type { ToolDef, ToolResult, UnifiedDB } from "../types";
 import type { EntryType } from "../config";
+import type { NativeLanceManager } from "../db/lance-manager";
 
-export function createUnifiedSearchTool(udb: UnifiedDB, ruflo: RufloHNSW | null): ToolDef {
+export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: NativeLanceManager | null): ToolDef {
   return {
     name: "unified_search",
     label: "Unified Memory Search",
@@ -17,24 +18,27 @@ export function createUnifiedSearchTool(udb: UnifiedDB, ruflo: RufloHNSW | null)
       const entryType = params.type as EntryType | undefined;
       const limit = (params.limit as number) ?? 10;
 
-      const sqlResults = udb.searchEntries(entryType, limit);
-      let hnswResults: any[] = [];
-      if (ruflo) {
+      // FTS5 keyword search via SQLite
+      const sqlResults = udb.ftsSearch(query, entryType, limit);
+
+      // Semantic vector search via LanceDB + Qwen3 embeddings
+      let vectorResults: any[] = [];
+      if (lanceManager?.isReady()) {
         try {
-          hnswResults = await ruflo.search(query, { limit, namespace: "unified" });
+          vectorResults = await lanceManager.search(query, limit);
         } catch {}
       }
 
       const lines = [
         `## SQL results (${sqlResults.length}):`,
         ...sqlResults.map((e: any) => `- [${e.entry_type}] ${e.summary || e.content?.slice(0, 100)}`),
-        `\n## HNSW results (${hnswResults.length}):`,
-        ...hnswResults.map((r: any) => `- [${(r.similarity * 100).toFixed(0)}%] ${r.key}: ${typeof r.value === "string" ? r.value.slice(0, 100) : JSON.stringify(r.value).slice(0, 100)}`),
+        `\n## Vector results (${vectorResults.length}):`,
+        ...vectorResults.map((r: any) => `- [${(r.similarity * 100).toFixed(0)}%] ${r.text?.slice(0, 120)}`),
       ];
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],
-        details: { sqlCount: sqlResults.length, hnswCount: hnswResults.length },
+        details: { sqlCount: sqlResults.length, vectorCount: vectorResults.length },
       };
     },
   };

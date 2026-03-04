@@ -39,6 +39,7 @@ export interface RufloHNSW {
 
 export interface UnifiedDB {
   searchEntries(entryType?: import("./config").EntryType, limit?: number): any[];
+  ftsSearch(query: string, entryType?: import("./config").EntryType, limit?: number): any[];
   storeEntry(params: {
     entryType: import("./config").EntryType;
     tags?: string;
