@@ -191,6 +191,11 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
   }
 
 
+  // Get single entry by ID (for enriching vector results)
+  getEntryById(id: number): any | undefined {
+    return this.db.prepare("SELECT * FROM unified_entries WHERE id = ?").get(id);
+  }
+
   // FTS5 full-text search
   ftsSearch(query: string, entryType?: EntryType, limit = 10): any[] {
     const ftsQuery = query.split(/\s+/).map(w => w.replace(/[^\w]/g, "")).filter(Boolean).join(" OR ");

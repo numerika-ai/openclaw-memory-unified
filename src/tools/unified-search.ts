@@ -22,23 +22,32 @@ export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: NativeLanc
       const sqlResults = udb.ftsSearch(query, entryType, limit);
 
       // Semantic vector search via LanceDB + Qwen3 embeddings
-      let vectorResults: any[] = [];
+      let vectorLines: string[] = [];
+      let vectorCount = 0;
       if (lanceManager?.isReady()) {
         try {
-          vectorResults = await lanceManager.search(query, limit);
+          const vectorResults = await lanceManager.search(query, limit);
+          vectorCount = vectorResults.length;
+          for (const r of vectorResults) {
+            // Enrich with text from SQLite by entryId
+            const entry = udb.getEntryById?.(r.entryId);
+            const text = entry?.summary || entry?.content?.slice(0, 120) || `entry#${r.entryId}`;
+            const similarity = Math.max(0, Math.round((1 - (r.distance || 0)) * 100));
+            vectorLines.push(`- [${similarity}%] [${entry?.entry_type || "?"}] ${text}`);
+          }
         } catch {}
       }
 
       const lines = [
         `## SQL results (${sqlResults.length}):`,
         ...sqlResults.map((e: any) => `- [${e.entry_type}] ${e.summary || e.content?.slice(0, 100)}`),
-        `\n## Vector results (${vectorResults.length}):`,
-        ...vectorResults.map((r: any) => `- [${(r.similarity * 100).toFixed(0)}%] ${r.text?.slice(0, 120)}`),
+        `\n## Vector results (${vectorCount}):`,
+        ...vectorLines,
       ];
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],
-        details: { sqlCount: sqlResults.length, vectorCount: vectorResults.length },
+        details: { sqlCount: sqlResults.length, vectorCount },
       };
     },
   };
