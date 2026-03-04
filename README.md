@@ -1,62 +1,19 @@
 # memory-unified — OpenClaw Plugin
 
-Unified memory layer for [OpenClaw](https://github.com/openclaw/openclaw) that merges **USMD SQLite** skill database with **HNSW** vector search. Gives your AI agent structured + semantic long-term memory with task tracking.
+Unified memory layer for [OpenClaw](https://github.com/openclaw/openclaw) that merges **SQLite** structured storage with **LanceDB** vector search and **Qwen3** local embeddings. Zero-cost semantic memory for AI agents.
 
-## Features
+## What It Does
 
-### Memory & Search
-- **Dual storage:** SQLite (structured) + HNSW (semantic vector search) in one plugin
-- **FTS5 full-text search:** fast keyword matching across all stored skills and entries
-- **Semantic search:** Qwen3-Embedding 4096-dim vectors via native `hnswlib-node` (no external vector DB needed)
-- **Unified search tool:** `unified_search` queries both SQL + HNSW simultaneously, merges and ranks results
+One plugin that gives your agent:
+- **Structured memory** — SQLite with 8 entry types, FTS5 full-text search
+- **Semantic search** — LanceDB vector store with 4096-dim Qwen3 embeddings
+- **RAG injection** — automatically surfaces relevant context on each message
+- **Skill learning** — tracks tool usage, detects patterns, proposes improvements
+- **Conversation threading** — groups messages into topics with lifecycle management
+- **File indexing** — scan workspace files into searchable memory
+- **Task tracking** — store and query work items with status
 
-### Entry Types
-| Type | Purpose | Example |
-|------|---------|---------|
-| `skill` | Learned procedures, SKILL.md files | "How to deploy via Docker" |
-| `protocol` | Reusable workflows, SOPs | "Subagent spawn protocol" |
-| `config` | Infrastructure, architecture, settings | "Server IPs, Docker ports" |
-| `history` | General facts, conversation logs | "User prefers dark mode" |
-| `tool` | Tool usage patterns, results | "ffmpeg conversion flags" |
-| `result` | Task outputs, deliverables | "Training run metrics" |
-| `task` | Work items with status tracking | "Hardware scan — IN_PROGRESS" |
-
-### Task Tracking
-- **Active work:** `unified_store(type="task", tags="active,...")` — what the agent is working on now
-- **Completed:** `unified_store(type="task", tags="done,...")` — finished items
-- **Blocked:** `unified_store(type="task", tags="blocked,...")` — waiting on something
-- **Query tasks:** `unified_search(type="task")` — find all tracked work items
-- Tasks are indexed in both SQLite (structured query) and HNSW (semantic search)
-
-### RAG (Retrieval-Augmented Generation)
-- **RAG slim on agent start:** searches memory for context relevant to the user's message
-- **Skill procedure injection:** matched skill procedures injected into context (`[SKILL MATCH]` blocks)
-- **HNSW semantic injection:** top-K vector matches with similarity scores
-- **Active thread injection:** recent conversation threads summarized for continuity
-- **Task context:** active tasks surfaced in RAG results
-
-### Skill Learning
-- **Skill execution tracking:** logs every skill use with timing, token count, success/failure
-- **Pattern recognition:** detects recurring patterns with confidence scoring
-- **Pattern decay:** confidence degrades over time — stale patterns fade out
-- **Procedure proposals:** proposes improved procedures based on execution history
-
-### Conversation Memory
-- **Conversation threads:** groups messages into threads with topics, tags, status
-- **Thread lifecycle:** active → resolved → archived — queryable via `unified_conversations`
-- **Cross-session continuity:** conversations persist across restarts and session rotations
-
-### Agent Hooks
-| Hook | Trigger | Action |
-|------|---------|--------|
-| `before_agent_start` | New message arrives | RAG slim: injects skills + HNSW + threads + patterns into context |
-| `after_tool_call` | Any tool completes | Logs tool name, params, result to HNSW with auto-tags |
-| `agent_end` | Session ends | Closes SONA trajectory with success/failure label |
-
-### Trajectory Tracking (SONA)
-- **Start/step/end lifecycle:** each agent session is a trajectory with quality-scored steps
-- **Self-learning signal:** success/failure labels feed back into skill confidence and pattern updates
-- **Ruflo MCP bridge:** optional integration with external Ruflo server for advanced analysis
+**Cost: $0/month** — uses local Qwen3-Embedding via Ollama (no OpenAI needed).
 
 ## Architecture
 
@@ -64,86 +21,97 @@ Unified memory layer for [OpenClaw](https://github.com/openclaw/openclaw) that m
 ┌──────────────────────────────────────────────────────────────────────┐
 │                      memory-unified plugin                           │
 ├───────────────────────────┬──────────────────────────────────────────┤
-│     USMD SQLite           │         Native HNSW (hnswlib-node)      │
-│     (structured)          │         (semantic, 4096-dim)             │
+│     SQLite (structured)   │       LanceDB (vector search)            │
 │                           │                                          │
-│ • skills                  │ • Qwen3-Embedding vectors                │
-│ • skill_executions        │ • cosine similarity search               │
-│ • unified_entries         │ • auto-embed on store                    │
-│   (type: skill/protocol/  │ • 50K max elements                      │
-│    config/history/tool/   │ • M=16, efConstruction=200               │
-│    result/task)           │                                          │
+│ • unified_entries         │ • 4096-dim Qwen3 vectors                 │
+│   (skill/protocol/config/ │ • native filtered search                 │
+│    history/tool/result/   │ • disk-based, scales to millions         │
+│    task/file)             │ • Arrow format (Pandas/DuckDB interop)   │
+│ • skills + executions     │ • delete/update support                  │
 │ • tool_calls              │                                          │
-│ • patterns                ├──────────────────────────────────────────┤
-│ • conversations           │         Ruflo MCP (optional)             │
-│ • artifacts               │ • trajectory tracking                    │
-│ • procedure_proposals     │ • external vector store                  │
+│ • patterns + confidence   ├──────────────────────────────────────────┤
+│ • conversations           │       Qwen3-Embedding (Ollama)           │
+│ • artifacts               │ • qwen3-embedding:8b model               │
+│ • FTS5 keyword search     │ • local, free, 4096 dimensions           │
 └───────────────────────────┴──────────────────────────────────────────┘
          │                              │
-         ▼                              ▼
-   FTS5 full-text              Ollama embeddings
-   keyword search              (qwen3-embedding:8b)
+    SQL + FTS5                   Semantic similarity
+    (exact match)                (meaning-based)
+```
+
+## Entry Types
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| `skill` | Learned procedures, SKILL.md files | "How to deploy via Docker" |
+| `protocol` | Reusable workflows, SOPs | "Subagent spawn protocol" |
+| `config` | Infrastructure, settings | "Server IPs, Docker ports" |
+| `history` | Facts, conversation logs | "User prefers dark mode" |
+| `tool` | Tool usage patterns, results | "ffmpeg conversion flags" |
+| `result` | Task outputs, deliverables | "Training run metrics" |
+| `task` | Work items with status | "Hardware scan — IN_PROGRESS" |
+| `file` | Indexed workspace files | "TOOLS.md contents" |
+
+## Tools
+
+### `unified_search`
+
+Search across SQL + vector memory simultaneously.
+
+```
+unified_search(query="Docker containers on Tank")
+unified_search(query="active work", type="task")
+unified_search(query="training baseline", type="config", limit=5)
+```
+
+### `unified_store`
+
+Store an entry with auto-tagging and embedding.
+
+```
+unified_store(content="Tank IP: 192.168.1.100", type="config", tags="infrastructure")
+unified_store(content="TASK: Fix collectors", type="task", tags="active,spark")
+```
+
+### `unified_conversations`
+
+Query conversation threads with lifecycle management.
+
+```
+unified_conversations()                              # active threads
+unified_conversations(status="all", query="Docker")  # search all
+```
+
+### `unified_index_files`
+
+Scan a directory and index files into memory.
+
+```
+unified_index_files()                                    # default: workspace
+unified_index_files(directory="/path/to/project", limit=50)
 ```
 
 ## Installation
 
 ### Prerequisites
 
-- [OpenClaw](https://github.com/openclaw/openclaw) v0.40+ (memory plugin slot support)
+- [OpenClaw](https://github.com/openclaw/openclaw) v0.40+
 - Node.js 22+
-- **Embedding service** — one of:
-  - [Ollama](https://ollama.ai) with `qwen3-embedding:8b` model (recommended, local, free)
-  - Any OpenAI-compatible `/v1/embeddings` endpoint producing 4096-dim vectors
+- [Ollama](https://ollama.ai) with `qwen3-embedding:8b` model
 
-### Step 1: Set up embeddings
-
-The plugin generates 4096-dimensional vectors using Qwen3-Embedding via Ollama.
+### Quick Start
 
 ```bash
-# Install Ollama (if not installed)
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Pull the embedding model (~4.5GB)
+# 1. Set up embeddings (on any machine in your network)
 ollama pull qwen3-embedding:8b
 
-# Verify it works
-curl http://localhost:11434/v1/embeddings \
-  -d '{"model":"qwen3-embedding:8b","input":"test"}' | jq '.data[0].embedding | length'
-# Should return: 4096
-```
-
-If Ollama runs on a different machine, set the env var:
-```bash
-export QWEN_EMBED_URL="http://YOUR_OLLAMA_HOST:11434/v1/embeddings"
-```
-
-### Step 2: Install the plugin
-
-```bash
-# Clone the repo
+# 2. Clone and install
 git clone https://github.com/numerika-ai/openclaw-memory-unified.git
 cd openclaw-memory-unified
-
-# Install dependencies
 npm install
 
-# Build TypeScript
-npm run build
-
-# Register in OpenClaw
-openclaw plugin install ./
+# 3. Configure OpenClaw (~/.openclaw/openclaw.json)
 ```
-
-**Alternative — manual install:**
-```bash
-cp -r . ~/.openclaw/extensions/memory-unified/
-cd ~/.openclaw/extensions/memory-unified/
-npm install && npm run build
-```
-
-### Step 3: Configure OpenClaw
-
-Add to your `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -167,157 +135,108 @@ Add to your `~/.openclaw/openclaw.json`:
 }
 ```
 
-> **Note:** Setting `plugins.slots.memory` to `"memory-unified"` replaces OpenClaw's default memory handler. Only one memory plugin can be active at a time.
-
-### Step 4: Restart
-
 ```bash
+# 4. Restart
 openclaw gateway restart
 ```
 
-### What happens on first start
-
-1. **SQLite database** is auto-created at `dbPath` (default: `~/.openclaw/workspace/skill-memory.db`)
-2. All tables from [schema.sql](schema.sql) are applied (skills, executions, unified_entries, etc.)
-3. **HNSW vector index** is created at `<dbPath-dir>/skill-memory.hnsw` (grows as data is stored)
-4. Plugin registers tools (`unified_search`, `unified_store`, `unified_conversations`) with the agent
-5. On each agent session start, RAG slim injects relevant memory snippets into context
-
-No manual database setup needed — everything is auto-created on first run.
-
-### Environment variables
+### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `QWEN_EMBED_URL` | `http://localhost:11434/v1/embeddings` | Ollama embeddings endpoint URL |
+| `QWEN_EMBED_URL` | `http://localhost:11434/v1/embeddings` | Ollama embeddings endpoint |
 
-Set in OpenClaw's env config for persistence:
-```json
-{
-  "env": {
-    "vars": {
-      "QWEN_EMBED_URL": "http://localhost:11434/v1/embeddings"
-    }
-  }
-}
+If Ollama runs on a different machine:
+```bash
+export QWEN_EMBED_URL="http://192.168.1.80:11434/v1/embeddings"
 ```
 
 ## Configuration
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `dbPath` | string | `skill-memory.db` | Path to SQLite database (created automatically) |
-| `ragSlim` | boolean | `true` | Inject micro-summaries into agent context on start |
-| `logToolCalls` | boolean | `true` | Store every tool call in HNSW with auto-tags |
-| `trajectoryTracking` | boolean | `true` | Track agent trajectories for self-learning |
-| `ragTopK` | number | `5` | Number of HNSW results to inject on agent start |
+| `dbPath` | string | `skill-memory.db` | SQLite database path |
+| `lanceDbPath` | string | `memory-vectors.lance` | LanceDB vector store path |
+| `ragSlim` | boolean | `true` | Inject context into agent on start |
+| `logToolCalls` | boolean | `true` | Log every tool call to memory |
+| `trajectoryTracking` | boolean | `true` | Track agent session trajectories |
+| `ragTopK` | number | `5` | Vector results to inject per query |
 
-## Tools
+## RAG Pipeline
 
-### `unified_search`
+On each incoming message, the plugin automatically:
 
-Search across USMD skills and HNSW vector memory. Combines structured SQL + semantic search.
+1. **FTS5 search** — keyword match against skills database
+2. **LanceDB search** — semantic similarity against all stored vectors
+3. **Thread context** — recent conversation threads with summaries
+4. **Pattern match** — recurring patterns with confidence scores
+5. **Active tasks** — surfaced in context for continuity
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | ✅ | Search query |
-| `type` | string | ❌ | Filter by entry type: `skill` / `protocol` / `config` / `history` / `tool` / `result` / `task` |
-| `limit` | number | ❌ | Max results (default: 10) |
+Results are injected as `<unified-memory>` block in the agent's context.
 
-**Examples:**
-```
-unified_search(query="Docker containers on Tank")
-unified_search(query="active work", type="task")
-unified_search(query="training baseline", type="config", limit=5)
-```
+## Agent Hooks
 
-### `unified_store`
+| Hook | Trigger | Action |
+|------|---------|--------|
+| `before_agent_start` | New message | RAG: injects skills + vectors + threads |
+| `after_tool_call` | Tool completes | Logs call to memory with auto-tags |
+| `agent_end` | Session ends | Closes trajectory, updates patterns |
 
-Store an entry in both USMD SQLite and HNSW. Auto-tags and summarizes.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `content` | string | ✅ | Content to store |
-| `type` | string | ❌ | Entry type: `skill` / `protocol` / `config` / `history` / `tool` / `result` / `task` (default: `history`) |
-| `tags` | string | ❌ | Comma-separated tags |
-| `source_path` | string | ❌ | Source file path |
-
-**Examples:**
-```
-# Store a skill
-unified_store(content="How to restart collectors...", type="skill", tags="collectors,spark")
-
-# Track a task
-unified_store(content="Hardware scan — IN_PROGRESS", type="task", tags="active,infrastructure")
-
-# Store infrastructure config
-unified_store(content="Tank IP: 192.168.1.100, RTX 3090", type="config", tags="infrastructure,gpu")
-```
-
-**Task tracking convention:**
-
-| Status | Tags | Meaning |
-|--------|------|---------|
-| Active | `active,...` | Currently being worked on |
-| Done | `done,...` | Completed successfully |
-| Blocked | `blocked,...` | Waiting on external input |
-
-### `unified_conversations`
-
-List or search conversation threads. Use to recall what was discussed.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `status` | string | ❌ | Filter: `active` / `resolved` / `blocked` / `archived` / `all` (default: `active`) |
-| `query` | string | ❌ | Search topic/tags/summary |
-| `limit` | number | ❌ | Max results (default: 10) |
-| `details` | boolean | ❌ | Include full details and messages (default: false) |
-
-**Examples:**
-```
-unified_conversations()                              # active threads
-unified_conversations(status="all", query="Docker")  # search all threads
-unified_conversations(status="resolved", limit=5)    # recent completed
-```
-
-## Schema
-
-The SQLite database includes:
+## Database Schema
 
 | Table | Purpose |
 |-------|---------|
+| `unified_entries` | All stored entries (8 types) with FTS5 |
 | `skills` | Learned procedures with success rates |
-| `skill_executions` | Execution history with timing and token usage |
-| `unified_entries` | All stored entries (7 types) with FTS5 index |
+| `skill_executions` | Execution history with timing |
 | `tool_calls` | Tool invocation log |
+| `patterns` | Detected recurring patterns |
+| `conversations` | Conversation threads |
+| `conversation_messages` | Messages within threads |
 | `artifacts` | Tracked files and outputs |
-| `patterns` | Detected recurring patterns with confidence |
-| `pattern_history` | Pattern confidence changes over time |
-| `conversations` | Conversation threads with lifecycle |
-| `conversation_messages` | Individual messages within threads |
-| `procedure_proposals` | Proposed skill improvements |
-| `hnsw_meta` | HNSW embedding metadata |
 
-See [schema.sql](schema.sql) for full DDL.
+## Project Structure
 
-## Migration
-
-Migrate existing USMD skills to Ruflo HNSW:
-
-```bash
-npx ts-node migrate.ts                     # default DB path
-npx ts-node migrate.ts --db /path/to/db    # custom path
+```
+memory-unified/
+├── index.ts                 # Main plugin (compiled, runs in production)
+├── src/
+│   ├── db/
+│   │   └── lancedb.ts       # LanceDB vector store
+│   ├── embedding/
+│   │   ├── ollama.ts        # Qwen3 via Ollama
+│   │   └── provider.ts      # Embedding interface
+│   ├── hooks/
+│   │   ├── rag-injection.ts # RAG context injection
+│   │   └── on-turn-end.ts   # Tool logging + skill tracking
+│   ├── tools/
+│   │   ├── unified-search.ts
+│   │   ├── unified-store.ts
+│   │   └── unified-conversations.ts
+│   ├── utils/
+│   │   ├── helpers.ts       # Auto-tag, summarize, etc.
+│   │   └── hnsw.ts          # Legacy HNSW (migration compatibility)
+│   ├── config.ts
+│   ├── daemon.ts
+│   ├── migrate.ts
+│   └── types.ts
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── CHANGELOG.md
+├── package.json
+└── tsconfig.json
 ```
 
-## Development
+## Why This Exists
 
-```bash
-# Watch mode
-npm run dev
+OpenClaw's built-in memory options are either too simple (markdown files) or too expensive (OpenAI embeddings). This plugin combines:
 
-# Build
-npm run build
-```
+- **SQLite** for structured data (fast, reliable, queryable)
+- **LanceDB** for vectors (scalable, disk-based, filterable)
+- **Qwen3** for embeddings (free, local, 4096-dim)
+- **FTS5** for keyword search (instant, no network)
+
+All in one plugin, zero external costs.
 
 ## License
 
@@ -325,6 +244,6 @@ MIT
 
 ## Links
 
-- [OpenClaw](https://github.com/openclaw/openclaw) — AI agent framework
+- [OpenClaw](https://github.com/openclaw/openclaw)
 - [OpenClaw Docs](https://docs.openclaw.ai)
-- [ClaWHub Skills](https://clawhub.com) — community skills marketplace
+- [Plugin Architecture](docs/ARCHITECTURE.md)
