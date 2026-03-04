@@ -12,38 +12,28 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
-import { unifiedConfigSchema, type UnifiedMemoryConfig, ENTRY_TYPES, type EntryType } from "./config";
+import { unifiedConfigSchema, type UnifiedMemoryConfig, ENTRY_TYPES, type EntryType } from "./src/config";
 import { HierarchicalNSW } from "hnswlib-node";
 
-// ============================================================================
-// Minimal OpenClaw Plugin API types (matches runtime contract)
-// ============================================================================
-interface PluginApi {
-  pluginConfig?: Record<string, unknown>;
-  resolvePath(input: string): string;
-  logger: {
-    info?(...args: unknown[]): void;
-    warn?(...args: unknown[]): void;
-    error?(...args: unknown[]): void;
-  };
-  registerTool(tool: ToolDef, opts?: { name?: string }): void;
-  registerCli(handler: (ctx: { program: any }) => void, opts?: { commands: string[] }): void;
-  registerService(svc: { id: string; start: () => void; stop: () => void }): void;
-  on(hookName: string, handler: (event: Record<string, unknown>) => unknown, opts?: { priority?: number }): void;
-}
-
-interface ToolResult {
-  content: Array<{ type: "text"; text: string }>;
-  details?: Record<string, unknown>;
-}
-
-interface ToolDef {
-  name: string;
-  label: string;
-  description: string;
-  parameters: unknown;
-  execute(toolCallId: string, params: Record<string, unknown>): Promise<ToolResult>;
-}
+// Import extracted components
+import type { PluginApi, ToolResult, ToolDef, RufloHNSW, UnifiedDB } from "./src/types";
+import { createUnifiedSearchTool } from "./src/tools/unified-search";
+import { createUnifiedStoreTool } from "./src/tools/unified-store";
+import { createUnifiedConversationsTool } from "./src/tools/unified-conversations";
+import { createRagInjectionHook } from "./src/hooks/rag-injection";
+import { createToolCallLogHook, createAgentEndHook } from "./src/hooks/on-turn-end";
+import { 
+  chunkText, 
+  autoTag, 
+  summarize, 
+  extractKeywords,
+  generateThreadId,
+  extractTopic,
+  extractConversationTags,
+  isActionRequest,
+  isDecision,
+  isResolution
+} from "./src/utils/helpers";
 
 // ============================================================================
 // Ruflo HNSW bridge — calls MCP tools at runtime
@@ -53,18 +43,7 @@ interface ToolDef {
  * We don't import Ruflo directly — we call the MCP tools that are already
  * registered in the OpenClaw runtime. This module provides a thin async
  * wrapper that the plugin hooks will use.
- *
- * In practice the plugin hooks get executed inside the OpenClaw agent loop
- * where these MCP tools are available. For the plugin build we define
- * the interface and at runtime the host injects the actual tool executor.
  */
-interface RufloHNSW {
-  store(key: string, value: string | object, opts?: { tags?: string[]; namespace?: string }): Promise<void>;
-  search(query: string, opts?: { limit?: number; threshold?: number; namespace?: string }): Promise<Array<{ key: string; value: any; similarity: number }>>;
-  trajectoryStart(task: string, agent?: string): Promise<string>;
-  trajectoryStep(trajectoryId: string, action: string, result: string, quality?: number): Promise<void>;
-  trajectoryEnd(trajectoryId: string, success: boolean, feedback?: string): Promise<void>;
-}
 
 // Stub that will be replaced by the runtime tool executor
 let ruflo: RufloHNSW | null = null;
@@ -188,7 +167,7 @@ function createRufloFromApi(api: PluginApi): RufloHNSW {
 // Qwen3 Embedding via Ollama (Spark) — 4096-dim semantic search
 // Added 2026-03-02 by Wiki. Falls back gracefully if Spark unreachable.
 // ============================================================================
-const QWEN_EMBED_URL = process.env.QWEN_EMBED_URL ?? "http://localhost:11434/v1/embeddings";
+const QWEN_EMBED_URL = process.env.QWEN_EMBED_URL ?? "http://192.168.1.80:11434/v1/embeddings";
 const QWEN_MODEL = "qwen3-embedding:8b";
 
 async function qwenEmbed(text: string): Promise<number[] | null> {
@@ -266,7 +245,6 @@ async function qwenSemanticSearch(query: string, db: any, logger: any, topK = 3)
   scored.sort((a, b) => b.similarity - a.similarity);
   return scored.slice(0, topK).filter(s => s.similarity > 0.35);
 }
-
 
 // ============================================================================
 // Native HNSW Index Manager — hnswlib-node with Qwen3 4096-dim embeddings
@@ -445,7 +423,7 @@ class NativeHnswManager {
 // ============================================================================
 // DB helper
 // ============================================================================
-class UnifiedDB {
+class UnifiedDBImpl implements UnifiedDB {
   public db: Database.Database;
 
   constructor(dbPath: string) {
@@ -467,7 +445,7 @@ class UnifiedDB {
       sql = `
 CREATE TABLE IF NOT EXISTS unified_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_type TEXT CHECK(entry_type IN ('skill','protocol','config','history','tool','result','task')) NOT NULL,
+    entry_type TEXT CHECK(entry_type IN ('skill','protocol','config','history','tool','result','task','file')) NOT NULL,
     tags TEXT, content TEXT NOT NULL, summary TEXT, source_path TEXT,
     hnsw_key TEXT, skill_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -477,6 +455,30 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
       `;
     }
     this.db.exec(sql);
+
+    // Migration: allow 'file' entry_type for existing databases
+    try {
+      this.db.exec("INSERT INTO unified_entries (entry_type, content) VALUES ('file', 'test')");
+      this.db.exec("DELETE FROM unified_entries WHERE content = 'test' AND entry_type = 'file'");
+    } catch (error) {
+      // Need to recreate table with new constraint
+      this.db.exec(`
+        CREATE TABLE unified_entries_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entry_type TEXT CHECK(entry_type IN ('skill','protocol','config','history','tool','result','task','file')) NOT NULL,
+          tags TEXT, content TEXT NOT NULL, summary TEXT, source_path TEXT,
+          hnsw_key TEXT, skill_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          memory_type TEXT DEFAULT 'episodic', access_count INTEGER DEFAULT 0,
+          last_accessed_at TIMESTAMP, namespace TEXT DEFAULT 'general'
+        );
+        INSERT INTO unified_entries_v2 SELECT * FROM unified_entries;
+        DROP TABLE unified_entries;
+        ALTER TABLE unified_entries_v2 RENAME TO unified_entries;
+        CREATE INDEX IF NOT EXISTS idx_unified_type ON unified_entries(entry_type);
+        CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
+      `);
+    }
 
     // Pattern learning tables (Phase 1)
     this.db.exec(`
@@ -603,165 +605,6 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
 }
 
 // ============================================================================
-// Chunking utility for CLI ingest
-// ============================================================================
-function chunkText(text: string, maxTokens = 500): string[] {
-  // Approximate: 1 token ≈ 4 chars
-  const maxChars = maxTokens * 4;
-  const chunks: string[] = [];
-  const paragraphs = text.split(/\n\n+/);
-  let current = "";
-
-  for (const para of paragraphs) {
-    if ((current + "\n\n" + para).length > maxChars && current.length > 0) {
-      chunks.push(current.trim());
-      current = para;
-    } else {
-      current = current ? current + "\n\n" + para : para;
-    }
-  }
-  if (current.trim()) chunks.push(current.trim());
-  return chunks;
-}
-
-function autoTag(text: string): string[] {
-  const tags: string[] = [];
-  if (/\bfunction\b|\bclass\b|\bimport\b|\bexport\b/i.test(text)) tags.push("code");
-  if (/\bstep\s+\d/i.test(text) || /procedure|workflow/i.test(text)) tags.push("procedure");
-  if (/\bconfig|\.env|settings|parameter/i.test(text)) tags.push("config");
-  if (/\btest|assert|expect|jest|vitest/i.test(text)) tags.push("testing");
-  if (/\bdocker|deploy|ci\/cd|kubernetes/i.test(text)) tags.push("devops");
-  if (/\bapi|endpoint|route|http/i.test(text)) tags.push("api");
-  if (/\bsecurity|auth|token|encrypt/i.test(text)) tags.push("security");
-  if (tags.length === 0) tags.push("general");
-  return tags;
-}
-
-function summarize(text: string, maxTokens = 25): string {
-  // Ultra-slim: first sentence or first N chars
-  const firstSentence = text.match(/^[^\n.!?]*[.!?]/);
-  const raw = firstSentence ? firstSentence[0] : text.slice(0, maxTokens * 4);
-  return raw.slice(0, maxTokens * 4).trim();
-}
-
-
-// ============================================================================
-// Pattern Learning — Phase 1 (keyword extraction + temporal decay)
-// Added 2026-03-02 by Wiki — extracted from Ruflo's pattern schema concept
-// ============================================================================
-
-const STOP_WORDS = new Set([
-  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 'was', 'one',
-  'our', 'out', 'day', 'had', 'has', 'his', 'how', 'its', 'may', 'new', 'now', 'old',
-  'see', 'way', 'who', 'did', 'get', 'let', 'say', 'she', 'too', 'use', 'from', 'this',
-  'that', 'with', 'have', 'will', 'been', 'what', 'when', 'where', 'which', 'there',
-  'their', 'them', 'then', 'than', 'these', 'those', 'some', 'other', 'about', 'into',
-  'your', 'just', 'also', 'more', 'would', 'could', 'should', 'each', 'make', 'like',
-  'nie', 'tak', 'jest', 'ale', 'czy', 'jak', 'ten', 'tam', 'dla', 'pod', 'nad',
-  'bez', 'przez', 'przy', 'przed', 'tylko', 'jeszcze', 'tego', 'jako', 'jego',
-  'system', 'utc', 'whatsapp', 'gateway', 'connected', 'please', 'thanks', 'hello',
-  'agent', 'tool', 'result', 'content', 'text', 'data', 'file', 'name', 'type',
-]);
-
-function extractKeywords(text: string): string[] {
-  if (!text) return [];
-  return [...new Set(
-    (text.toLowerCase().match(/[a-ząćęłńóśźż]{3,}/g) || [])
-      .filter(w => !STOP_WORDS.has(w))
-      .slice(0, 10)
-  )];
-}
-
-/**
- * Daily decay — reduces confidence of all patterns by decay_rate.
- * Can be called from cron or manually.
- * Patterns below 0.05 are effectively dormant.
- */
-function decayPatterns(db: any): number {
-  const patterns = db.prepare(
-    "SELECT id, confidence, decay_rate FROM patterns WHERE confidence > 0.1"
-  ).all() as Array<{ id: number; confidence: number; decay_rate: number }>;
-
-  for (const p of patterns) {
-    const newConf = Math.max(0.05, p.confidence * p.decay_rate);
-    if (Math.abs(newConf - p.confidence) > 0.001) {
-      db.prepare(
-        "UPDATE patterns SET confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(newConf, p.id);
-      db.prepare(
-        "INSERT INTO pattern_history (pattern_id, event_type, old_confidence, new_confidence) VALUES (?, 'decay', ?, ?)"
-      ).run(p.id, p.confidence, newConf);
-    }
-  }
-  return patterns.length;
-}
-
-// ============================================================================
-// Conversation Tracking Helpers - Phase 5
-// Added 2026-03-03 by Wiki - conversation thread tracking with 3-layer arch
-// ============================================================================
-
-function generateThreadId(topic: string): string {
-  const date = new Date().toISOString().split('T')[0];
-  const slug = topic.toLowerCase()
-    .replace(/[^a-z\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 40);
-  return `${date}:${slug}`;
-}
-
-function extractTopic(prompt: string): string {
-  let clean = prompt;
-  // Strip WhatsApp/audio metadata
-  clean = clean.replace(/\[Audio\]\s*/gi, '');
-  clean = clean.replace(/User text:\s*/gi, '');
-  clean = clean.replace(/\[WhatsApp\s+[^\]]*\]\s*(<media:\w+>)?\s*/gi, '');
-  clean = clean.replace(/Transcript:\s*/gi, '');
-  // Strip system/cron/subagent prefixes
-  clean = clean.replace(/^System:\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/i, '');
-  clean = clean.replace(/^\s*\[?cron:[a-f0-9-]+\s+[\w-]+\]?\s*/i, '');
-  clean = clean.replace(/^\s*\[Subagent Context\][^.]*\.\s*/i, '');
-  // Strip remaining bracket metadata
-  clean = clean.replace(/\[.*?\]/g, '');
-  clean = clean.trim();
-  if (clean.length < 5) return 'misc';
-  if (clean.length <= 60) return clean;
-  const firstSentence = clean.match(/^[^.!?\n]+[.!?]?/)?.[0];
-  return (firstSentence || clean.slice(0, 60)).trim();
-}
-
-function extractConversationTags(prompt: string, matchedSkill?: string): string[] {
-  const tags: string[] = [];
-  if (matchedSkill) tags.push(matchedSkill);
-
-  const domains: [string, RegExp][] = [
-    ['memory', /memo|pami\u0119\u0107|hnsw|embed|vector|baz[aey] dan/i],
-    ['trading', /trad|bot|hyperliquid|binance|pnl|spread|arbitr/i],
-    ['infrastructure', /docker|systemd|ram|cpu|spark|tank|server|nginx/i],
-    ['openclaw', /openclaw|gateway|plugin|config|restart|kompak/i],
-    ['tts', /g\u0142os\u00f3w|voice|piper|radio|audycj|tts/i],
-    ['coding', /kod|code|claude|script|html|typescript|python/i],
-    ['task', /task|focalboard|kanban|sprint|priory/i],
-  ];
-  for (const [tag, re] of domains) {
-    if (re.test(prompt)) tags.push(tag);
-  }
-  return [...new Set(tags)].slice(0, 5);
-}
-
-function isActionRequest(text: string): boolean {
-  return /zr\u00f3b|stw\u00f3rz|sprawdź|wyłącz|włącz|zapisz|dodaj|usuń|napraw|wdro\u017c|odpal|uruchom|zatrzymaj|wy\u015blij/i.test(text);
-}
-
-function isDecision(text: string): boolean {
-  return /zdecydowa\u0142|decyzja|robimy|wybieramy|plan:|zatwierdzam|ok ruszaj|tak prosz\u0119|lecimy/i.test(text);
-}
-
-function isResolution(text: string): boolean {
-  return /\u2705|done|gotowe|zrobione|zako\u0144czon|wdro\u017con|naprawion/i.test(text);
-}
-
-// ============================================================================
 // Plugin Definition
 // ============================================================================
 const memoryUnifiedPlugin = {
@@ -783,20 +626,23 @@ const memoryUnifiedPlugin = {
     const resolvedDbPath = api.resolvePath(cfg.dbPath);
     (api as any)._resolvedDbPath = resolvedDbPath;
 
-    let udb: UnifiedDB;
+    let udb: UnifiedDBImpl;
     try {
-      udb = new UnifiedDB(resolvedDbPath);
+      udb = new UnifiedDBImpl(resolvedDbPath);
     } catch (err) {
       api.logger.error?.("memory-unified: DB init failed:", err);
       throw err;
     }
 
     ruflo = createRufloFromApi(api);
-    let activeTrajectoryId: string | null = null;
-    let matchedSkillName: string | null = null;
-    let matchedSkillId: number | null = null;
-    let turnPrompt: string | null = null;
 
+    // Shared state across hooks
+    const memoryState = {
+      activeTrajectoryId: null as string | null,
+      matchedSkillName: null as string | null,
+      matchedSkillId: null as number | null,
+      turnPrompt: null as string | null,
+    };
 
     // ========================================================================
     // HNSW Native Index — Phase 0 (replaces Ruflo MCP HNSW)
@@ -816,301 +662,18 @@ const memoryUnifiedPlugin = {
     // Hook 1: before_agent_start → RAG slim
     // ========================================================================
     if (cfg.ragSlim) {
+      const ragHook = createRagInjectionHook({
+        udb,
+        ruflo,
+        hnswManager,
+        cfg,
+        memoryState,
+        qwenSemanticSearch,
+        extractKeywords,
+      });
+
       api.on("before_agent_start", async (event) => {
-        const prompt = event.prompt as string | undefined;
-        if (!prompt || prompt.length < 5) return;
-
-        try {
-          const slimLines: string[] = [];
-          let matchedProcedure: string | null = null;
-
-          // ============================================================
-          // STEP 1: FTS5 full-text search for matching SKILLS (priority)
-          // Searches full SKILL.md content, not just descriptions.
-          // Fixed 2026-03-02 by Wiki — replaces broken HNSW-only search.
-          // ============================================================
-          try {
-            // Extract keywords from prompt (simple: split on spaces, take 3+ char words)
-            const keywords = (prompt.match(/[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}/g) || [])
-              .slice(0, 10)
-              .join(" OR ");
-
-            if (keywords.length > 0) {
-              const ftsResults = udb.db.prepare(`
-                SELECT ue.hnsw_key, ue.content, ue.source_path, ue.summary,
-                       length(ue.content) as content_len
-                FROM unified_fts fts
-                JOIN unified_entries ue ON ue.id = fts.rowid
-                WHERE unified_fts MATCH ?
-                AND ue.entry_type = 'skill'
-                ORDER BY rank
-                LIMIT 3
-              `).all(keywords);
-
-              for (const r of ftsResults as any[]) {
-                const name = (r.hnsw_key || "").replace("skill-full:", "").replace("skill:", "");
-                const contentLen = r.content_len || 0;
-
-                if (contentLen > 500) {
-                  // Full skill found — inject PROCEDURE, not just name
-                  slimLines.push(`[SKILL MATCH] ${name} (${contentLen}B full procedure available)`);
-                  // Take the BEST match as the enforced procedure
-                  if (!matchedProcedure && r.content) {
-                    matchedProcedure = r.content.slice(0, 4000);
-                    // Remember which skill matched for agent_end logging
-                    matchedSkillName = name;
-                    turnPrompt = prompt.slice(0, 500);
-                    // Look up skill ID for execution logging
-                    try {
-                      const skill = udb.getSkillByName(name);
-                      if (skill) matchedSkillId = skill.id;
-                    } catch {}
-                  }
-                } else {
-                  slimLines.push(`[skill] ${name}: ${(r.summary || "").slice(0, 80)}`);
-                }
-              }
-
-              if (ftsResults.length > 0) {
-                api.logger.info?.(`memory-unified: FTS5 found ${ftsResults.length} skills for: ${keywords.slice(0, 50)}`);
-              }
-            }
-          } catch (ftsErr) {
-            // FTS5 table might not exist yet — fallback gracefully
-            api.logger.warn?.("memory-unified: FTS5 search failed (table may need rebuild):", ftsErr);
-          }
-
-          // ============================================================
-          // STEP 2: History for matched skill (past conversations)
-          // ============================================================
-          if (matchedSkillName) {
-            try {
-              const skillObj = udb.getSkillByName(matchedSkillName);
-              if (skillObj) {
-                const history = udb.db.prepare(`
-                  SELECT summary, status, timestamp FROM skill_executions
-                  WHERE skill_id = ? ORDER BY timestamp DESC LIMIT 3
-                `).all(skillObj.id) as any[];
-                for (const h of history) {
-                  slimLines.push(`[history] ${matchedSkillName} (${h.timestamp}): ${h.status} — ${(h.summary || "").slice(0, 120)}`);
-                }
-                if (history.length > 0) {
-                  api.logger.info?.(`memory-unified: injecting ${history.length} past executions for ${matchedSkillName}`);
-                }
-              }
-            } catch {}
-          }
-
-          // Recent executions across all skills
-          const recentSkills = udb.getRecentExecutions(3);
-          for (const s of recentSkills) {
-            slimLines.push(`[recent] ${s.skill_name}: ${s.status}`);
-          }
-
-
-          // ============================================================
-          // STEP 2.5: Native HNSW vector search (4096-dim Qwen3)
-          // Searches ALL entry types via real semantic similarity.
-          // Added 2026-03-02 by Wiki — Phase 0 native HNSW.
-          // ============================================================
-          if (hnswManager?.isReady()) {
-            try {
-              const hnswResults = await hnswManager.search(prompt, 5);
-              if (hnswResults.length > 0) {
-                // Fetch matched entries from SQLite
-                const hnswEntryIds = hnswResults.map(r => r.entryId);
-                const placeholders = hnswEntryIds.map(() => '?').join(',');
-                const hnswEntries = udb.db.prepare(
-                  `SELECT id, entry_type, content, summary, hnsw_key FROM unified_entries WHERE id IN (${placeholders})`
-                ).all(...hnswEntryIds) as any[];
-
-                const entryMap = new Map(hnswEntries.map((e: any) => [e.id, e]));
-
-                for (const hr of hnswResults) {
-                  const entry = entryMap.get(hr.entryId);
-                  if (!entry) continue;
-                  const sim = 1 - hr.distance; // cosine distance → similarity
-                  if (sim < 0.35) continue; // threshold
-
-                  const name = (entry.hnsw_key || '').replace(/^(skill-full|skill|tool|history|config):/, '');
-
-                  if (entry.entry_type === 'skill' && (entry.content || '').length > 500 && !matchedProcedure) {
-                    // Full skill found via HNSW — inject as procedure
-                    matchedProcedure = (entry.content as string).slice(0, 4000);
-                    matchedSkillName = name;
-                    turnPrompt = prompt.slice(0, 500);
-                    try {
-                      const skill = udb.getSkillByName(name);
-                      if (skill) matchedSkillId = skill.id;
-                    } catch {}
-                    slimLines.push(`[HNSW MATCH] ${name} (${(sim * 100).toFixed(0)}% semantic, ${entry.entry_type})`);
-                    api.logger.info?.(`memory-unified: HNSW matched skill: ${name} (${(sim * 100).toFixed(0)}%)`);
-                  } else {
-                    slimLines.push(`[hnsw] ${name || entry.entry_type}:${entry.id} (${(sim * 100).toFixed(0)}%): ${(entry.summary || '').slice(0, 80)}`);
-                  }
-                }
-
-                if (hnswResults.length > 0) {
-                  api.logger.info?.(`memory-unified: HNSW found ${hnswResults.length} entries for prompt`);
-                }
-              }
-            } catch (hnswErr) {
-              // HNSW search failed — FTS5 is primary, this is supplementary
-              api.logger.warn?.('memory-unified: HNSW search in RAG failed:', hnswErr);
-            }
-          }
-          // ============================================================
-          // STEP 3: Qwen3 4096-dim semantic search (Spark Ollama)
-          // Catches fuzzy/semantic queries that FTS5 keywords miss.
-          // Added 2026-03-02 by Wiki — replaces broken HNSW 128-dim.
-          // ============================================================
-          if (!matchedProcedure) {
-            try {
-              const qwenResults = await qwenSemanticSearch(prompt, udb.db, api.logger, 2);
-              for (const r of qwenResults) {
-                if (r.content.length > 500 && !matchedProcedure) {
-                  matchedProcedure = r.content.slice(0, 4000);
-                  matchedSkillName = r.name;
-                  turnPrompt = prompt.slice(0, 500);
-                  try {
-                    const skill = udb.getSkillByName(r.name);
-                    if (skill) matchedSkillId = skill.id;
-                  } catch {}
-                  slimLines.push(`[QWEN MATCH] ${r.name} (${(r.similarity * 100).toFixed(0)}% semantic)`);
-                  api.logger.info?.(`memory-unified: Qwen semantic match: ${r.name} (${(r.similarity * 100).toFixed(0)}%)`);
-                } else {
-                  slimLines.push(`[qwen] ${r.name} (${(r.similarity * 100).toFixed(0)}%)`);
-                }
-              }
-            } catch (qErr) {
-              // Qwen/Spark unreachable — FTS5 is primary, this is supplementary
-              api.logger.warn?.("memory-unified: Qwen search failed (Spark may be down):", qErr);
-            }
-          }
-
-
-          // ============================================================
-          // STEP 2.7: Pattern-based boosting (Phase 1)
-          // Checks learned patterns for keyword overlap with prompt.
-          // Added 2026-03-02 by Wiki — Phase 1 pattern learning.
-          // ============================================================
-          try {
-            const promptKeywords = extractKeywords(prompt);
-            if (promptKeywords.length >= 2) {
-              const allPatterns = udb.db.prepare(
-                "SELECT skill_name, keywords, confidence FROM patterns WHERE confidence > 0.3 ORDER BY confidence DESC LIMIT 20"
-              ).all() as Array<{ skill_name: string; keywords: string; confidence: number }>;
-
-              for (const pattern of allPatterns) {
-                const patternKw: string[] = JSON.parse(pattern.keywords);
-                const overlap = patternKw.filter(kw => promptKeywords.includes(kw)).length;
-                const overlapRatio = overlap / patternKw.length;
-
-                // If >50% keyword overlap and good confidence, boost this skill
-                if (overlapRatio > 0.5 && pattern.confidence > 0.4) {
-                  if (!matchedSkillName || matchedSkillName !== pattern.skill_name) {
-                    slimLines.push(`[pattern] ${pattern.skill_name} (${(pattern.confidence * 100).toFixed(0)}% confidence, ${(overlapRatio * 100).toFixed(0)}% keyword overlap)`);
-                  }
-                }
-              }
-
-              if (allPatterns.length > 0) {
-                api.logger.info?.(`memory-unified: Pattern boost checked ${allPatterns.length} patterns against ${promptKeywords.length} keywords`);
-              }
-            }
-          } catch (patternErr) {
-            // Pattern matching should never block the agent
-            api.logger.warn?.("memory-unified: pattern boost failed:", patternErr);
-          }
-
-          // ============================================================
-          // STEP 2.8: CONVERSATION CONTEXT (Phase 5)
-          // Injects active conversation threads for continuity.
-          // Added 2026-03-03 by Wiki.
-          // ============================================================
-          try {
-            const activeConversations = udb.db.prepare(`
-              SELECT topic, tags, summary, status, message_count, updated_at
-              FROM conversations
-              WHERE status = 'active'
-              AND updated_at > datetime('now', '-24 hours')
-              AND confidence > 0.3
-              ORDER BY updated_at DESC
-              LIMIT 5
-            `).all() as any[];
-
-            if (activeConversations.length > 0) {
-              slimLines.push('[active threads]');
-              for (const conv of activeConversations) {
-                const convTags = JSON.parse(conv.tags || '[]').join(', ');
-                slimLines.push(`  ${conv.topic.slice(0,60)} (${convTags}) \u2014 ${conv.summary.slice(0,80)}`);
-              }
-            }
-          } catch (convCtxErr) {
-            api.logger.warn?.('memory-unified: conversation context error:', String(convCtxErr));
-          }
-
-          if (slimLines.length === 0 && !matchedProcedure) return;
-
-          // ============================================================
-          // BUILD CONTEXT: If we matched a full skill, inject the procedure
-          // ============================================================
-          let contextBlock: string;
-          if (matchedProcedure) {
-            contextBlock = `<unified-memory>\n## Matched Skill Procedure (USE THIS):\n${matchedProcedure}\n\n## Other context:\n${slimLines.join("\n")}\n</unified-memory>`;
-            api.logger.info?.("memory-unified: ENFORCING skill procedure in context");
-          } else {
-            contextBlock = `<unified-memory>\nSlim RAG context:\n${slimLines.join("\n")}\n</unified-memory>`;
-          }
-
-          api.logger.info?.(`memory-unified: RAG injecting ${slimLines.length} entries (procedure: ${!!matchedProcedure})`);
-
-          // ============================================================
-          // DYNAMIC TOOL ROUTING — reduce tools sent to LLM
-          // If a skill was matched AND has required_tools, set dynamic
-          // tool policy via globalThis. OpenClaw's patched pipeline
-          // reads this and filters tools accordingly.
-          // Added 2026-03-02 by Wiki — tool-router feature.
-          // ============================================================
-          if (matchedSkillName) {
-            try {
-              const skill = udb.getSkillByName(matchedSkillName);
-              if (skill && (skill as any).required_tools) {
-                const requiredTools: string[] = JSON.parse((skill as any).required_tools);
-                if (requiredTools.length > 0) {
-                  // Set dynamic tool policy — OpenClaw's patched pipeline reads this
-                  (globalThis as any).__openclawDynamicToolPolicy = {
-                    allow: requiredTools
-                  };
-                  api.logger.info?.(
-                    `memory-unified: TOOL ROUTING — skill "${matchedSkillName}" → ${requiredTools.length} tools: [${requiredTools.join(", ")}]`
-                  );
-                }
-              }
-            } catch (toolRouteErr) {
-              api.logger.warn?.("memory-unified: tool routing failed:", String(toolRouteErr));
-              // Clear on error — fallback to full tool list
-              (globalThis as any).__openclawDynamicToolPolicy = undefined;
-            }
-          } else {
-            // No skill matched — clear any stale policy, allow all tools
-            (globalThis as any).__openclawDynamicToolPolicy = undefined;
-          }
-
-          // Start trajectory if enabled
-          if (cfg.trajectoryTracking && ruflo) {
-            try {
-              activeTrajectoryId = await ruflo.trajectoryStart(
-                prompt.slice(0, 200),
-                "memory-unified"
-              );
-            } catch {}
-          }
-
-          return { prependContext: contextBlock };
-        } catch (err) {
-          api.logger.warn?.("memory-unified: RAG failed:", err);
-        }
+        return await ragHook(api, event);
       });
     }
 
@@ -1118,75 +681,16 @@ const memoryUnifiedPlugin = {
     // Hook 2: on_tool_call → log to HNSW with skill tag
     // ========================================================================
     if (cfg.logToolCalls) {
+      const toolCallHook = createToolCallLogHook({
+        udb,
+        ruflo,
+        hnswManager,
+        cfg,
+        memoryState,
+      });
+
       api.on("after_tool_call", async (event) => {
-        try {
-          // OpenClaw may pass tool info in different field names
-          const toolName = (event.toolName ?? event.name ?? event.tool ?? "unknown") as string;
-          const params = (event.params ?? event.arguments ?? event.input) as Record<string, unknown> | undefined;
-          const result = (event.result ?? event.output ?? "") as string;
-          const error = (event.error ?? event.err) as string | undefined;
-
-          // Skip our own tools and internal tools
-          if (toolName.startsWith("skill_") || toolName.startsWith("unified_") || toolName === "artifact_register") return;
-          if (toolName === "unknown") return;
-
-          const paramsPreview = params ? JSON.stringify(params).slice(0, 500) : "";
-          const resultStr = typeof result === "string" ? result : JSON.stringify(result ?? "");
-          const resultPreview = error ? `ERROR: ${error}`.slice(0, 300) : resultStr.slice(0, 300);
-          const status = error ? "error" : "success";
-
-          // Store in SQLite unified_entries
-          const tags = autoTag(`${toolName} ${paramsPreview}`);
-          const summary = `${toolName}(${status}): ${paramsPreview.slice(0, 80)}`;
-          const hnswKey = `tool:${toolName}:${Date.now()}`;
-
-          const toolEntryId = udb.storeEntry({
-            entryType: "tool",
-            tags: tags.join(","),
-            content: JSON.stringify({ tool: toolName, params: paramsPreview, result: resultPreview, status }),
-            summary,
-            hnswKey,
-          });
-
-          // Store in HNSW (fire and forget, don't block agent)
-          if (ruflo) {
-            ruflo.store(hnswKey, { tool: toolName, summary, status, tags }, { tags: [toolName, ...tags], namespace: "unified" }).catch(() => {});
-
-          // Native HNSW indexing (fire and forget, don't block agent)
-          if (hnswManager?.isReady()) {
-            hnswManager.addEntry(toolEntryId, summary).catch(() => {});
-          }
-          }
-
-          // ============================================================
-          // MoE Auto-Routing: when sessions_spawn is called, log the
-          // model routing decision to Ruflo for learning.
-          // Added 2026-03-02 by Wiki — enforces MoE at plugin level.
-          // ============================================================
-          if (toolName === "sessions_spawn" && ruflo && params) {
-            try {
-              const task = (params.task ?? params.message ?? "") as string;
-              const modelUsed = (params.model ?? "unknown") as string;
-
-              // Log routing decision as pattern
-              const routingPattern = `moe-route: task="${task.slice(0, 100)}" → model=${modelUsed}`;
-              await ruflo.store(`moe:${Date.now()}`, routingPattern, {
-                tags: ["moe", "model-routing", modelUsed],
-                namespace: "pattern",
-              });
-
-              api.logger.info?.(`memory-unified: MoE logged: ${modelUsed} for "${task.slice(0, 50)}"`);
-            } catch {} // non-critical
-          }
-
-          // Trajectory step (fire and forget)
-          if (activeTrajectoryId && ruflo) {
-            ruflo.trajectoryStep(activeTrajectoryId, `tool:${toolName}`, status, status === "success" ? 0.8 : 0.2).catch(() => {});
-          }
-        } catch (err) {
-          // Silently skip — tool logging should never break the agent
-          api.logger.warn?.("memory-unified: tool log failed:", String(err).slice(0, 100));
-        }
+        return await toolCallHook(api, event);
       });
     }
 
@@ -1194,410 +698,117 @@ const memoryUnifiedPlugin = {
     // Hook 3: agent_end → trajectory end + tool policy cleanup
     // ========================================================================
     if (cfg.trajectoryTracking) {
+      const agentEndHook = createAgentEndHook({
+        udb,
+        ruflo,
+        hnswManager,
+        cfg,
+        memoryState,
+      });
+
       api.on("agent_end", async (event) => {
-        // Always clear dynamic tool policy — prevent stale policies across turns
-        (globalThis as any).__openclawDynamicToolPolicy = undefined;
-
-        try {
-          const success = event.success !== false;
-          const response = (event.response ?? event.output ?? event.reply ?? "") as string;
-          const responsePreview = typeof response === "string" ? response.slice(0, 500) : JSON.stringify(response).slice(0, 500);
-
-          // ============================================================
-          // SKILL EXECUTION LOGGING — closes the learning loop
-          // If a skill was matched in before_agent_start, log what happened.
-          // Next time this skill is triggered, history is injected.
-          // Added 2026-03-02 by Wiki.
-          // ============================================================
-          if (matchedSkillName && matchedSkillId) {
-            try {
-              const summary = `${turnPrompt?.slice(0, 100) ?? "?"} → ${responsePreview.slice(0, 200)}`;
-              udb.db.prepare(`
-                INSERT INTO skill_executions (skill_id, summary, status, output_summary, session_key)
-                VALUES (?, ?, ?, ?, ?)
-              `).run(
-                matchedSkillId,
-                summary,
-                success ? "success" : "error",
-                responsePreview.slice(0, 1000),
-                event.sessionKey ?? "unknown"
-              );
-
-              // Update skill use_count and success_rate
-              udb.db.prepare(`
-                UPDATE skills SET 
-                  use_count = use_count + 1,
-                  last_used = CURRENT_TIMESTAMP,
-                  success_rate = (success_rate * use_count + ?) / (use_count + 1)
-                WHERE id = ?
-              `).run(success ? 1.0 : 0.0, matchedSkillId);
-
-              api.logger.info?.(`memory-unified: logged execution for skill "${matchedSkillName}" (${success ? "success" : "error"})`);
-
-              // Feed Ruflo Intelligence — store pattern from successful executions
-              if (success && ruflo) {
-                try {
-                  const patternKey = `pattern:skill:${matchedSkillName}:${Date.now()}`;
-                  const patternVal = `skill:${matchedSkillName} | query: ${turnPrompt?.slice(0, 100)} | result: success | ts: ${new Date().toISOString()}`;
-                  await ruflo.store(patternKey, patternVal, {
-                    tags: ["pattern", "skill-execution", matchedSkillName],
-                    namespace: "pattern",
-                  });
-                } catch {} // non-critical
-              }
-
-              // ============================================================
-              // PATTERN EXTRACTION (Phase 1)
-              // Extract keywords from prompt and upsert pattern with confidence.
-              // Added 2026-03-02 by Wiki — Phase 1 pattern learning.
-              // ============================================================
-              try {
-                const keywords = extractKeywords(turnPrompt || "");
-                if (keywords.length >= 3) {
-                  const keywordsJson = JSON.stringify(keywords.sort());
-
-                  const existing = udb.db.prepare(
-                    "SELECT id, confidence, success_count FROM patterns WHERE skill_name = ? AND keywords = ?"
-                  ).get(matchedSkillName, keywordsJson) as { id: number; confidence: number; success_count: number } | undefined;
-
-                  if (existing) {
-                    // Boost confidence: +0.03 per success, cap at 0.95
-                    const newConf = Math.min(0.95, existing.confidence + 0.03);
-                    udb.db.prepare(
-                      "UPDATE patterns SET confidence = ?, success_count = success_count + 1, updated_at = CURRENT_TIMESTAMP, last_matched_at = CURRENT_TIMESTAMP WHERE id = ?"
-                    ).run(newConf, existing.id);
-                    udb.db.prepare(
-                      "INSERT INTO pattern_history (pattern_id, event_type, old_confidence, new_confidence, context) VALUES (?, 'success', ?, ?, ?)"
-                    ).run(existing.id, existing.confidence, newConf, (turnPrompt || "").slice(0, 200));
-                    api.logger.info?.(`memory-unified: pattern boosted for "${matchedSkillName}" (${existing.confidence.toFixed(2)} -> ${newConf.toFixed(2)})`);
-                  } else {
-                    // New pattern starts at 0.5
-                    const info = udb.db.prepare(
-                      "INSERT INTO patterns (skill_name, keywords, confidence) VALUES (?, ?, 0.5)"
-                    ).run(matchedSkillName, keywordsJson);
-                    // Log creation in history
-                    if (info.lastInsertRowid) {
-                      udb.db.prepare(
-                        "INSERT INTO pattern_history (pattern_id, event_type, old_confidence, new_confidence, context) VALUES (?, 'created', 0, 0.5, ?)"
-                      ).run(info.lastInsertRowid, (turnPrompt || "").slice(0, 200));
-                    }
-                    api.logger.info?.(`memory-unified: new pattern created for "${matchedSkillName}" with ${keywords.length} keywords`);
-                  }
-                }
-              } catch (patErr) {
-                api.logger.warn?.("memory-unified: pattern extraction failed:", patErr);
-              }
-
-            } catch (logErr) {
-              api.logger.warn?.("memory-unified: skill execution log failed:", logErr);
-            }
-          }
-
-
-          // ============================================================
-          // PATTERN FAILURE (Phase 1)
-          // If a skill was matched but the turn failed, reduce confidence
-          // of all patterns for that skill.
-          // Added 2026-03-02 by Wiki — Phase 1 pattern learning.
-          // ============================================================
-          if (matchedSkillName && !success) {
-            try {
-              const failPatterns = udb.db.prepare(
-                "SELECT id, confidence FROM patterns WHERE skill_name = ?"
-              ).all(matchedSkillName) as Array<{ id: number; confidence: number }>;
-
-              for (const p of failPatterns) {
-                const newConf = Math.max(0.05, p.confidence - 0.05);
-                udb.db.prepare(
-                  "UPDATE patterns SET confidence = ?, failure_count = failure_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-                ).run(newConf, p.id);
-                udb.db.prepare(
-                  "INSERT INTO pattern_history (pattern_id, event_type, old_confidence, new_confidence) VALUES (?, 'failure', ?, ?)"
-                ).run(p.id, p.confidence, newConf);
-              }
-
-              if (failPatterns.length > 0) {
-                api.logger.info?.(`memory-unified: reduced confidence for ${failPatterns.length} patterns of "${matchedSkillName}" (failure)`);
-              }
-            } catch (failPatErr) {
-              api.logger.warn?.("memory-unified: pattern failure update failed:", failPatErr);
-            }
-          }
-
-          // ============================================================
-          // CONVERSATION TRACKING (Phase 5)
-          // Track conversation threads with 3-layer architecture.
-          // Added 2026-03-03 by Wiki.
-          // ============================================================
-          try {
-            const convPrompt = turnPrompt || "";
-            const convResponse = responsePreview || "";
-
-            if (convPrompt.length > 20) {
-              // Skip cron heartbeats, subagent contexts, and system reconnects
-              const skipConv = /^\s*\[?cron:|HEARTBEAT_OK|\[Subagent Context\]|Auto-handoff check|WhatsApp gateway (dis)?connected/i.test(convPrompt);
-              if (skipConv) {
-                api.logger.info?.('memory-unified: CONV SKIP (system/cron message)');
-                throw new Error('skip');  // caught by outer try/catch, no-op
-              }
-              const topic = extractTopic(convPrompt);
-              const convTags = extractConversationTags(convPrompt, matchedSkillName || undefined);
-              const channel = convPrompt.match(/\[WhatsApp|Mattermost|Discord/i)?.[0]?.replace('[','') || 'unknown';
-
-              // Find existing active conversation with similar tags
-              const recentConversations = udb.db.prepare(
-                "SELECT id, thread_id, topic, tags, summary, message_count, details FROM conversations WHERE status = 'active' AND updated_at > datetime('now', '-2 hours') ORDER BY updated_at DESC LIMIT 5"
-              ).all() as any[];
-
-              let conversationId: number | null = null;
-              let isNewConversation = true;
-
-              for (const conv of recentConversations) {
-                const existingTags: string[] = JSON.parse(conv.tags || '[]');
-                const overlap = convTags.filter(t => existingTags.includes(t)).length;
-                if (overlap >= 1 || conv.topic.toLowerCase().includes(topic.toLowerCase().slice(0, 20))) {
-                  conversationId = conv.id;
-                  isNewConversation = false;
-
-                  const newSummary = convResponse.length > 50
-                    ? convResponse.slice(0, 150).replace(/\n/g, ' ').trim()
-                    : conv.summary;
-
-                  udb.db.prepare(`
-                    UPDATE conversations
-                    SET summary = ?,
-                        message_count = message_count + 1,
-                        updated_at = CURRENT_TIMESTAMP,
-                        last_accessed_at = CURRENT_TIMESTAMP,
-                        tags = ?,
-                        details = CASE WHEN length(details || '') < 2000
-                          THEN (COALESCE(details, '') || char(10) || ?)
-                          ELSE details END
-                    WHERE id = ?
-                  `).run(
-                    newSummary,
-                    JSON.stringify([...new Set([...existingTags, ...convTags])]),
-                    `[${new Date().toISOString().slice(11,16)}] ${topic.slice(0, 80)}`,
-                    conversationId
-                  );
-                  break;
-                }
-              }
-
-              if (isNewConversation) {
-                const threadId = generateThreadId(topic);
-                const summary = convResponse.length > 50
-                  ? convResponse.slice(0, 150).replace(/\n/g, ' ').trim()
-                  : topic;
-
-                const result = udb.db.prepare(`
-                  INSERT OR IGNORE INTO conversations (thread_id, topic, tags, channel, participants, summary, details, key_facts)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                `).run(
-                  threadId,
-                  topic.slice(0, 200),
-                  JSON.stringify(convTags),
-                  channel,
-                  JSON.stringify(['bartosz', 'wiki']),
-                  summary,
-                  `[${new Date().toISOString().slice(11,16)}] ${topic.slice(0, 200)}`,
-                  JSON.stringify([])
-                );
-                conversationId = result.lastInsertRowid as number;
-              }
-
-              if (conversationId) {
-                const userSummary = convPrompt.slice(0, 200).replace(/\n/g, ' ').trim();
-                const assistantSummary = convResponse.slice(0, 200).replace(/\n/g, ' ').trim();
-
-                if (userSummary.length > 10) {
-                  udb.db.prepare(`
-                    INSERT INTO conversation_messages (conversation_id, role, content_summary, has_decision, has_action)
-                    VALUES (?, 'user', ?, ?, ?)
-                  `).run(conversationId, userSummary, isDecision(convPrompt) ? 1 : 0, isActionRequest(convPrompt) ? 1 : 0);
-                }
-
-                if (assistantSummary.length > 10) {
-                  udb.db.prepare(`
-                    INSERT INTO conversation_messages (conversation_id, role, content_summary, has_decision, has_action)
-                    VALUES (?, 'assistant', ?, ?, ?)
-                  `).run(conversationId, assistantSummary, isResolution(convResponse) ? 1 : 0, 0);
-                }
-
-                if (isResolution(convResponse) && isNewConversation) {
-                  udb.db.prepare("UPDATE conversations SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP WHERE id = ?")
-                    .run(conversationId);
-                }
-              }
-
-              api.logger.info?.(`memory-unified: CONV ${isNewConversation ? 'NEW' : 'UPDATE'} thread=${conversationId} topic="${topic.slice(0,40)}" tags=${convTags.join(',')}`);
-            }
-          } catch (convErr) {
-            api.logger.warn?.('memory-unified: conversation tracking error:', String(convErr));
-          }
-
-          // Trajectory end (Ruflo SONA)
-          if (activeTrajectoryId && ruflo) {
-            try {
-              await ruflo.trajectoryEnd(
-                activeTrajectoryId,
-                success,
-                matchedSkillName ? `Skill: ${matchedSkillName}` : "No skill matched"
-              );
-            } catch {}
-          }
-
-          api.logger.info?.(`memory-unified: turn ended (skill: ${matchedSkillName ?? "none"}, success: ${success})`);
-        } catch (err) {
-          api.logger.warn?.("memory-unified: agent_end failed:", err);
-        } finally {
-          activeTrajectoryId = null;
-          matchedSkillName = null;
-          matchedSkillId = null;
-          turnPrompt = null;
-        }
+        return await agentEndHook(api, event);
       });
     }
 
     // ========================================================================
-    // Tool: unified_search — search across USMD + HNSW
+    // File indexing tool
     // ========================================================================
-    api.registerTool({
-      name: "unified_search",
-      label: "Unified Memory Search",
-      description: "Search across USMD skills and HNSW vector memory. Combines structured SQL + semantic search.",
-      parameters: Type.Object({
-        query: Type.String({ description: "Search query" }),
-        type: Type.Optional(Type.String({ description: "Filter by entry type: skill/protocol/config/history/tool/result/task" })),
-        limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
-      }),
-      async execute(_id, params) {
-        const query = params.query as string;
-        const entryType = params.type as EntryType | undefined;
-        const limit = (params.limit as number) ?? 10;
-
-        const sqlResults = udb.searchEntries(entryType, limit);
-        let hnswResults: any[] = [];
-        if (ruflo) {
+    function createUnifiedIndexFilesTool(udb: UnifiedDB): ToolDef {
+      return {
+        name: "unified_index_files",
+        label: "Index Files",
+        description: "Scan a directory and index files into unified memory",
+        parameters: Type.Object({
+          directory: Type.Optional(Type.String({ 
+            description: "Directory to scan (default: workspace)", 
+            default: "/home/tank/.openclaw/workspace" 
+          })),
+          limit: Type.Optional(Type.Number({ 
+            description: "Maximum number of files to process (default: 100)", 
+            default: 100 
+          })),
+        }),
+        async execute(_id, params): Promise<ToolResult> {
+          const directory = params.directory as string || "/home/tank/.openclaw/workspace";
+          const limit = params.limit as number || 100;
+          
+          let processed = 0;
+          let skipped = 0;
+          const extensions = ['.md', '.txt', '.json', '.ts', '.py', '.sh'];
+          
           try {
-            hnswResults = await ruflo.search(query, { limit, namespace: "unified" });
-          } catch {}
-        }
-
-        const lines = [
-          `## SQL results (${sqlResults.length}):`,
-          ...sqlResults.map((e: any) => `- [${e.entry_type}] ${e.summary || e.content?.slice(0, 100)}`),
-          `\n## HNSW results (${hnswResults.length}):`,
-          ...hnswResults.map((r: any) => `- [${(r.similarity * 100).toFixed(0)}%] ${r.key}: ${typeof r.value === "string" ? r.value.slice(0, 100) : JSON.stringify(r.value).slice(0, 100)}`),
-        ];
-
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-          details: { sqlCount: sqlResults.length, hnswCount: hnswResults.length },
-        };
-      },
-    }, { name: "unified_search" });
-
-    // ========================================================================
-    // Tool: unified_store — store entry to both backends
-    // ========================================================================
-    api.registerTool({
-      name: "unified_store",
-      label: "Unified Memory Store",
-      description: "Store an entry in both USMD SQLite and Ruflo HNSW. Auto-tags and summarizes.",
-      parameters: Type.Object({
-        content: Type.String({ description: "Content to store" }),
-        type: Type.Optional(Type.String({ description: "Entry type: skill/protocol/config/history/tool/result/task (default: history)" })),
-        tags: Type.Optional(Type.String({ description: "Comma-separated tags" })),
-        source_path: Type.Optional(Type.String({ description: "Source file path" })),
-      }),
-      async execute(_id, params) {
-        const content = params.content as string;
-        const entryType = (params.type as EntryType) ?? "history";
-        const userTags = params.tags as string | undefined;
-        const sourcePath = params.source_path as string | undefined;
-
-        const tags = userTags ? userTags.split(",").map(t => t.trim()) : autoTag(content);
-        const summary = summarize(content);
-        const hnswKey = `${entryType}:${Date.now()}:${randomUUID().slice(0, 6)}`;
-
-        const entryId = udb.storeEntry({
-          entryType,
-          tags: tags.join(","),
-          content,
-          summary,
-          sourcePath,
-          hnswKey,
-        });
-
-        if (ruflo) {
-          await ruflo.store(hnswKey, { content: content.slice(0, 2000), summary, tags, entryType }, { tags, namespace: "unified" });
-        }
-
-        // Index in native HNSW (fire and forget)
-        if (hnswManager?.isReady()) {
-          hnswManager.addEntry(entryId, summary || content.slice(0, 2000)).catch(() => {});
-        }
-
-        return {
-          content: [{ type: "text", text: `Stored unified entry #${entryId} [${entryType}] (hnsw: ${hnswKey})` }],
-          details: { entryId, hnswKey, tags },
-        };
-      },
-    }, { name: "unified_store" });
-
-    // ========================================================================
-    // Tool: unified_conversations - query conversation threads (Phase 5)
-    // Added 2026-03-03 by Wiki.
-    // ========================================================================
-    api.registerTool({
-      name: "unified_conversations",
-      label: "Conversation Threads",
-      description: "List or search conversation threads. Use to recall what was discussed.",
-      parameters: Type.Object({
-        status: Type.Optional(Type.String({ description: "Filter by status: active/resolved/blocked/archived/all (default: active)" })),
-        query: Type.Optional(Type.String({ description: "Search topic/tags/summary" })),
-        limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
-        details: Type.Optional(Type.Boolean({ description: "Include full details and messages (default: false)" })),
-      }),
-      async execute(_id, params) {
-        const status = (params.status as string) || 'active';
-        const limit = Math.min((params.limit as number) || 10, 50);
-        const query = (params.query as string) || '';
-        const includeDetails = (params.details as boolean) || false;
-
-        let sql = 'SELECT * FROM conversations WHERE 1=1';
-        const sqlParams: any[] = [];
-
-        if (status !== 'all') {
-          sql += ' AND status = ?';
-          sqlParams.push(status);
-        }
-        if (query) {
-          sql += ' AND (topic LIKE ? OR tags LIKE ? OR summary LIKE ?)';
-          const q = `%${query}%`;
-          sqlParams.push(q, q, q);
-        }
-        sql += ' ORDER BY updated_at DESC LIMIT ?';
-        sqlParams.push(limit);
-
-        const conversations = udb.db.prepare(sql).all(...sqlParams) as any[];
-
-        if (includeDetails) {
-          for (const conv of conversations) {
-            conv.messages = udb.db.prepare(
-              'SELECT role, content_summary, has_decision, has_action, timestamp FROM conversation_messages WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT 20'
-            ).all(conv.id);
+            const entries = fs.readdirSync(directory, { withFileTypes: true });
+            
+            for (const entry of entries) {
+              if (processed >= limit) break;
+              
+              if (entry.isFile()) {
+                const filePath = path.join(directory, entry.name);
+                const ext = path.extname(entry.name).toLowerCase();
+                
+                if (extensions.includes(ext)) {
+                  // Check if already indexed
+                  const existing = udb.searchEntries("file").find(
+                    (e: any) => e.source_path === filePath
+                  );
+                  
+                  if (existing) {
+                    skipped++;
+                    continue;
+                  }
+                  
+                  // Read and index file
+                  try {
+                    const content = fs.readFileSync(filePath, 'utf-8').slice(0, 2000);
+                    const relativePath = path.relative("/home/tank/.openclaw/workspace", filePath);
+                    
+                    // Generate tags from path
+                    const pathParts = relativePath.split('/').filter(p => p.length > 0);
+                    const tags = pathParts.map(part => 
+                      part.replace(/\.(md|txt|json|ts|py|sh)$/, '')
+                           .replace(/[^a-zA-Z0-9]/g, '-')
+                           .toLowerCase()
+                    ).join(',');
+                    
+                    udb.storeEntry({
+                      entryType: "file",
+                      content,
+                      tags,
+                      sourcePath: filePath,
+                      summary: `File: ${entry.name} (${content.length} chars)`
+                    });
+                    
+                    processed++;
+                  } catch (readError) {
+                    // Skip files that can't be read
+                    skipped++;
+                  }
+                }
+              }
+            }
+            
+            return {
+              content: [{ type: "text", text: `Indexed ${processed} files, skipped ${skipped} files from ${directory}` }],
+              details: { processed, skipped, directory }
+            };
+            
+          } catch (error) {
+            return {
+              content: [{ type: "text", text: `Failed to scan directory ${directory}: ${error}` }],
+            };
           }
-        }
+        },
+      };
+    }
 
-        const text = JSON.stringify(conversations, null, 2);
-        return {
-          content: [{ type: "text" as const, text }],
-          details: { count: conversations.length, status, query: query || undefined },
-        };
-      },
-    }, { name: "unified_conversations" });
+    // ========================================================================
+    // Tools: Register all four tools
+    // ========================================================================
+    api.registerTool(createUnifiedSearchTool(udb, ruflo), { name: "unified_search" });
+    api.registerTool(createUnifiedStoreTool(udb, ruflo, hnswManager), { name: "unified_store" });
+    api.registerTool(createUnifiedConversationsTool(udb), { name: "unified_conversations" });
+    api.registerTool(createUnifiedIndexFilesTool(udb), { name: "unified_index_files" });
 
     // ========================================================================
     // CLI: openclaw ingest <path>
