@@ -61,7 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
           memory_type TEXT DEFAULT 'episodic', access_count INTEGER DEFAULT 0,
           last_accessed_at TIMESTAMP, namespace TEXT DEFAULT 'general'
         );
-        INSERT INTO unified_entries_v2 SELECT * FROM unified_entries;
+        INSERT INTO unified_entries_v2 (id, entry_type, tags, content, summary, source_path, hnsw_key, skill_id, created_at, updated_at) SELECT * FROM unified_entries;
         DROP TABLE unified_entries;
         ALTER TABLE unified_entries_v2 RENAME TO unified_entries;
         CREATE INDEX IF NOT EXISTS idx_unified_type ON unified_entries(entry_type);
