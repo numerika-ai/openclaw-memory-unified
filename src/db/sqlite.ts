@@ -143,6 +143,40 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
       CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversations(updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_conv_thread ON conversations(thread_id);
     `);
+
+    // FTS5 full-text index on unified_entries
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS unified_fts USING fts5(
+        content, summary, tags, hnsw_key,
+        content='unified_entries', content_rowid='id'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS unified_entries_ai AFTER INSERT ON unified_entries BEGIN
+        INSERT INTO unified_fts(rowid, content, summary, tags, hnsw_key)
+        VALUES (new.id, new.content, new.summary, new.tags, new.hnsw_key);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS unified_entries_ad AFTER DELETE ON unified_entries BEGIN
+        INSERT INTO unified_fts(unified_fts, rowid, content, summary, tags, hnsw_key)
+        VALUES ('delete', old.id, old.content, old.summary, old.tags, old.hnsw_key);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS unified_entries_au AFTER UPDATE ON unified_entries BEGIN
+        INSERT INTO unified_fts(unified_fts, rowid, content, summary, tags, hnsw_key)
+        VALUES ('delete', old.id, old.content, old.summary, old.tags, old.hnsw_key);
+        INSERT INTO unified_fts(rowid, content, summary, tags, hnsw_key)
+        VALUES (new.id, new.content, new.summary, new.tags, new.hnsw_key);
+      END;
+    `);
+
+    // Rebuild FTS index if unified_entries has rows but FTS is empty (existing DB upgrade)
+    try {
+      const entryCount = (this.db.prepare("SELECT COUNT(*) as c FROM unified_entries").get() as any)?.c ?? 0;
+      const ftsCount = (this.db.prepare("SELECT COUNT(*) as c FROM unified_fts").get() as any)?.c ?? 0;
+      if (entryCount > 0 && ftsCount === 0) {
+        this.db.exec("INSERT INTO unified_fts(unified_fts) VALUES('rebuild')");
+      }
+    } catch {}
   }
 
   // --- Unified entries ---

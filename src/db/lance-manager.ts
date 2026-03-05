@@ -70,6 +70,8 @@ export class NativeLanceManager {
   }
 
   isReady(): boolean {
+    // sqlite-vec mode doesn't require LanceDB to be initialized
+    if (this.vectorBackend === "sqlite-vec" && this.sqliteVecStore) return true;
     return this.ready;
   }
 
@@ -124,16 +126,18 @@ export class NativeLanceManager {
 
   /** Search for entries most similar to query text, routed by vectorBackend setting */
   async search(query: string, topK = 5): Promise<Array<{ entryId: number; distance: number }>> {
-    if (!this.ready) return [];
-
     try {
       const embedding = await qwenEmbed(query);
       if (!embedding || embedding.length !== 4096) return [];
 
+      // sqlite-vec only: no LanceDB needed
       if (this.vectorBackend === "sqlite-vec" && this.sqliteVecStore) {
         return this.sqliteVecStore.search(embedding, topK);
       }
 
+      if (!this.ready) return [];
+
+      // dual: merge both backends
       if (this.vectorBackend === "dual" && this.sqliteVecStore) {
         const [lanceResults, vecResults] = await Promise.all([
           this.lanceStore.search(embedding, topK),
