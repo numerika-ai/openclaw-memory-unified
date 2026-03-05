@@ -17,6 +17,7 @@ interface MemoryState {
   matchedSkillName: string | null;
   matchedSkillId: number | null;
   turnPrompt: string | null;
+  agentId: string | null;
 }
 
 interface NativeLanceManager {
@@ -60,12 +61,14 @@ export function createToolCallLogHook(deps: HookDependencies) {
       const summary = `${toolName}(${status}): ${paramsPreview.slice(0, 80)}`;
       const hnswKey = `tool:${toolName}:${Date.now()}`;
 
+      const agentId = (event.agentId ?? event.agent_id ?? (globalThis as any).__openclawAgentId ?? "unknown") as string;
       const toolEntryId = udb.storeEntry({
         entryType: "tool",
         tags: tags.join(","),
         content: JSON.stringify({ tool: toolName, params: paramsPreview, result: resultPreview, status }),
         summary,
         hnswKey,
+        agentId,
       });
 
       // Store in HNSW (fire and forget, don't block agent)
@@ -362,6 +365,8 @@ export function createAgentEndHook(deps: HookDependencies) {
       memoryState.matchedSkillName = null;
       memoryState.matchedSkillId = null;
       memoryState.turnPrompt = null;
+      memoryState.agentId = null;
+      (globalThis as any).__openclawAgentId = undefined;
     }
   };
 }

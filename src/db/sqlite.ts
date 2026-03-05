@@ -38,11 +38,13 @@ CREATE TABLE IF NOT EXISTS unified_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entry_type TEXT CHECK(entry_type IN ('skill','protocol','config','history','tool','result','task','file')) NOT NULL,
     tags TEXT, content TEXT NOT NULL, summary TEXT, source_path TEXT,
-    hnsw_key TEXT, skill_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    hnsw_key TEXT, skill_id INTEGER, agent_id TEXT DEFAULT 'unknown',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_unified_type ON unified_entries(entry_type);
 CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
+CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
       `;
     }
     this.db.exec(sql);
@@ -58,7 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           entry_type TEXT CHECK(entry_type IN ('skill','protocol','config','history','tool','result','task','file')) NOT NULL,
           tags TEXT, content TEXT NOT NULL, summary TEXT, source_path TEXT,
-          hnsw_key TEXT, skill_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          hnsw_key TEXT, skill_id INTEGER, agent_id TEXT DEFAULT 'unknown',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           memory_type TEXT DEFAULT 'episodic', access_count INTEGER DEFAULT 0,
           last_accessed_at TIMESTAMP, namespace TEXT DEFAULT 'general'
@@ -169,6 +172,16 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
       END;
     `);
 
+    // Migration: add agent_id column to unified_entries (safe for existing DBs)
+    try {
+      this.db.exec("ALTER TABLE unified_entries ADD COLUMN agent_id TEXT DEFAULT 'unknown'");
+    } catch {
+      // Column already exists — expected on subsequent runs
+    }
+    try {
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id)");
+    } catch {}
+
     // Rebuild FTS index if unified_entries has rows but FTS is empty (existing DB upgrade)
     try {
       const entryCount = (this.db.prepare("SELECT COUNT(*) as c FROM unified_entries").get() as any)?.c ?? 0;
@@ -188,22 +201,30 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
     sourcePath?: string;
     hnswKey?: string;
     skillId?: number;
+    agentId?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO unified_entries (entry_type, tags, content, summary, source_path, hnsw_key, skill_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO unified_entries (entry_type, tags, content, summary, source_path, hnsw_key, skill_id, agent_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const r = stmt.run(
       params.entryType, params.tags ?? null, params.content,
       params.summary ?? null, params.sourcePath ?? null,
-      params.hnswKey ?? null, params.skillId ?? null
+      params.hnswKey ?? null, params.skillId ?? null,
+      params.agentId ?? "unknown"
     );
     return r.lastInsertRowid as number;
   }
 
-  searchEntries(entryType?: EntryType, limit = 20): any[] {
+  searchEntries(entryType?: EntryType, limit = 20, agentId?: string): any[] {
+    if (entryType && agentId) {
+      return this.db.prepare("SELECT * FROM unified_entries WHERE entry_type = ? AND agent_id = ? ORDER BY created_at DESC LIMIT ?").all(entryType, agentId, limit);
+    }
     if (entryType) {
       return this.db.prepare("SELECT * FROM unified_entries WHERE entry_type = ? ORDER BY created_at DESC LIMIT ?").all(entryType, limit);
+    }
+    if (agentId) {
+      return this.db.prepare("SELECT * FROM unified_entries WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?").all(agentId, limit);
     }
     return this.db.prepare("SELECT * FROM unified_entries ORDER BY created_at DESC LIMIT ?").all(limit);
   }
@@ -233,16 +254,22 @@ CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
   }
 
   // FTS5 full-text search
-  ftsSearch(query: string, entryType?: EntryType, limit = 10): any[] {
+  ftsSearch(query: string, entryType?: EntryType, limit = 10, agentId?: string): any[] {
     const ftsQuery = query.split(/\s+/).map(w => w.replace(/[^\w]/g, "")).filter(Boolean).join(" OR ");
-    if (!ftsQuery) return this.searchEntries(entryType, limit);
+    if (!ftsQuery) return this.searchEntries(entryType, limit, agentId);
     try {
+      if (entryType && agentId) {
+        return this.db.prepare("SELECT e.* FROM unified_entries e JOIN unified_fts f ON e.id = f.rowid WHERE unified_fts MATCH ? AND e.entry_type = ? AND e.agent_id = ? ORDER BY rank LIMIT ?").all(ftsQuery, entryType, agentId, limit);
+      }
       if (entryType) {
         return this.db.prepare("SELECT e.* FROM unified_entries e JOIN unified_fts f ON e.id = f.rowid WHERE unified_fts MATCH ? AND e.entry_type = ? ORDER BY rank LIMIT ?").all(ftsQuery, entryType, limit);
       }
+      if (agentId) {
+        return this.db.prepare("SELECT e.* FROM unified_entries e JOIN unified_fts f ON e.id = f.rowid WHERE unified_fts MATCH ? AND e.agent_id = ? ORDER BY rank LIMIT ?").all(ftsQuery, agentId, limit);
+      }
       return this.db.prepare("SELECT e.* FROM unified_entries e JOIN unified_fts f ON e.id = f.rowid WHERE unified_fts MATCH ? ORDER BY rank LIMIT ?").all(ftsQuery, limit);
     } catch {
-      return this.searchEntries(entryType, limit);
+      return this.searchEntries(entryType, limit, agentId);
     }
   }
   close(): void { this.db.close(); }

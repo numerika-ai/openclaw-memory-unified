@@ -71,6 +71,7 @@ const memoryUnifiedPlugin = {
       matchedSkillName: null as string | null,
       matchedSkillId: null as number | null,
       turnPrompt: null as string | null,
+      agentId: null as string | null,
     };
 
     // ========================================================================

@@ -23,12 +23,14 @@ export function createUnifiedStoreTool(
       type: Type.Optional(Type.String({ description: "Entry type: skill/protocol/config/history/tool/result/task (default: history)" })),
       tags: Type.Optional(Type.String({ description: "Comma-separated tags" })),
       source_path: Type.Optional(Type.String({ description: "Source file path" })),
+      agent_id: Type.Optional(Type.String({ description: "Agent identifier (e.g. wiki, jarvis, hermes). Auto-detected from session if omitted." })),
     }),
     async execute(_id, params): Promise<ToolResult> {
       const content = params.content as string;
       const entryType = (params.type as EntryType) ?? "history";
       const userTags = params.tags as string | undefined;
       const sourcePath = params.source_path as string | undefined;
+      const agentId = (params.agent_id as string | undefined) ?? (globalThis as any).__openclawAgentId ?? "unknown";
 
       const tags = userTags ? userTags.split(",").map(t => t.trim()) : autoTag(content);
       const summary = summarize(content);
@@ -41,6 +43,7 @@ export function createUnifiedStoreTool(
         summary,
         sourcePath,
         hnswKey,
+        agentId,
       });
 
       if (ruflo) {
@@ -53,8 +56,8 @@ export function createUnifiedStoreTool(
       }
 
       return {
-        content: [{ type: "text", text: `Stored unified entry #${entryId} [${entryType}] (hnsw: ${hnswKey})` }],
-        details: { entryId, hnswKey, tags },
+        content: [{ type: "text", text: `Stored unified entry #${entryId} [${entryType}] agent=${agentId} (hnsw: ${hnswKey})` }],
+        details: { entryId, hnswKey, tags, agentId },
       };
     },
   };

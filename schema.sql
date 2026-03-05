@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS unified_entries (
     source_path TEXT,
     hnsw_key TEXT,
     skill_id INTEGER REFERENCES skills(id),
+    agent_id TEXT DEFAULT 'unknown',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -104,3 +105,4 @@ CREATE INDEX IF NOT EXISTS idx_executions_status ON skill_executions(status);
 CREATE INDEX IF NOT EXISTS idx_unified_type ON unified_entries(entry_type);
 CREATE INDEX IF NOT EXISTS idx_unified_hnsw ON unified_entries(hnsw_key);
 CREATE INDEX IF NOT EXISTS idx_unified_skill ON unified_entries(skill_id);
+CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);

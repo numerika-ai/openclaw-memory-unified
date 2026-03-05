@@ -7,6 +7,7 @@ interface MemoryState {
   matchedSkillName: string | null;
   matchedSkillId: number | null;
   turnPrompt: string | null;
+  agentId: string | null;
 }
 
 interface NativeLanceManager {
@@ -42,6 +43,11 @@ export function createRagInjectionHook(deps: HookDependencies) {
   return async function(api: PluginApi, event: Record<string, unknown>) {
     const prompt = event.prompt as string | undefined;
     if (!prompt || prompt.length < 5) return;
+
+    // Capture agent_id from event context and expose globally for tools
+    const agentId = (event.agentId ?? event.agent_id ?? "unknown") as string;
+    memoryState.agentId = agentId;
+    (globalThis as any).__openclawAgentId = agentId;
 
     try {
       const slimLines: string[] = [];

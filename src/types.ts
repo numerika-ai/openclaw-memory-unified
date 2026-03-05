@@ -38,8 +38,8 @@ export interface RufloHNSW {
 }
 
 export interface UnifiedDB {
-  searchEntries(entryType?: import("./config").EntryType, limit?: number): any[];
-  ftsSearch(query: string, entryType?: import("./config").EntryType, limit?: number): any[];
+  searchEntries(entryType?: import("./config").EntryType, limit?: number, agentId?: string): any[];
+  ftsSearch(query: string, entryType?: import("./config").EntryType, limit?: number, agentId?: string): any[];
   getEntryById?(id: number): any | undefined;
   storeEntry(params: {
     entryType: import("./config").EntryType;
@@ -49,6 +49,7 @@ export interface UnifiedDB {
     sourcePath?: string;
     hnswKey?: string;
     skillId?: number;
+    agentId?: string;
   }): number;
   getSkillByName(name: string): any | undefined;
   listSkills(category?: string): any[];

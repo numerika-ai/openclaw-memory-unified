@@ -12,14 +12,16 @@ export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: NativeLanc
       query: Type.String({ description: "Search query" }),
       type: Type.Optional(Type.String({ description: "Filter by entry type: skill/protocol/config/history/tool/result/task" })),
       limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
+      agent_id: Type.Optional(Type.String({ description: "Filter by agent (e.g. wiki, jarvis, hermes). Omit to search all agents." })),
     }),
     async execute(_id, params): Promise<ToolResult> {
       const query = params.query as string;
       const entryType = params.type as EntryType | undefined;
       const limit = (params.limit as number) ?? 10;
+      const agentId = params.agent_id as string | undefined;
 
       // FTS5 keyword search via SQLite
-      const sqlResults = udb.ftsSearch(query, entryType, limit);
+      const sqlResults = udb.ftsSearch(query, entryType, limit, agentId);
 
       // Semantic vector search via LanceDB + Qwen3 embeddings
       let vectorLines: string[] = [];
