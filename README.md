@@ -137,6 +137,36 @@ Add to `openclaw.json`:
 
 **Test environment:** Hermes VM (OpenClaw agent on loco39) — 7/7 entries dual-written successfully.
 
+## Replacing Other Memory Plugins (Optional)
+
+If your OpenClaw instance uses other memory plugins or built-in memory features, disable them so memory-unified is the sole memory provider.
+
+### Checklist
+
+1. **Disable built-in memorySearch** (if enabled):
+   Add to :
+   
+
+2. **Disable other memory plugins** (if any):
+   In , set  for any competing memory plugins, e.g.:
+   
+
+3. **Disable MCP bridges to external memory services** (if any):
+   If you have an MCP bridge connecting to an external memory/swarm service, disable it:
+   
+
+4. **Set memory-unified as the memory slot**:
+   
+
+5. **Restart the gateway** to apply changes.
+
+### Verification
+
+After restart, check logs for:
+
+
+And confirm there are **no** other memory services loading.
+
 ## Docs
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — current v2.2 architecture
@@ -145,4 +175,4 @@ Add to `openclaw.json`:
 - [CUDA-SETUP.md](docs/CUDA-SETUP.md) — GPU embedding setup
 
 ---
-*Last edited by Wiki — 2026-03-05 11:30 UTC*
+*Last edited by Wiki — 2026-03-05 17:34 UTC*
