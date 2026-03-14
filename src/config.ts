@@ -15,6 +15,7 @@ export interface UnifiedMemoryConfig {
     enabled: boolean;
     extractionModel: string;
     extractionUrl: string;
+    extractionApiKey?: string;
     minConversationLength: number;
     consolidationThreshold: number;
     maxFactsPerTurn: number;
@@ -67,6 +68,7 @@ export const unifiedConfigSchema = {
         enabled: mb.enabled !== false,
         extractionModel: typeof mb.extractionModel === "string" ? mb.extractionModel : "qwen3:32b",
         extractionUrl: typeof mb.extractionUrl === "string" ? mb.extractionUrl : "http://192.168.1.80:11434/v1/chat/completions",
+        extractionApiKey: typeof mb.extractionApiKey === "string" ? mb.extractionApiKey : undefined,
         minConversationLength: typeof mb.minConversationLength === "number" ? mb.minConversationLength : 0,
         consolidationThreshold: typeof mb.consolidationThreshold === "number" ? mb.consolidationThreshold : 0.85,
         maxFactsPerTurn: typeof mb.maxFactsPerTurn === "number" ? mb.maxFactsPerTurn : 10,

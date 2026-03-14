@@ -364,11 +364,14 @@ export function createAgentEndHook(deps: HookDependencies) {
           const isCron = /^\s*\[?cron:|HEARTBEAT_OK|\[Subagent Context\]|Auto-handoff check/i.test(mbPrompt);
           if (!isCron && conversationText.length >= memoryBankConfig.minConversationLength) {
             // Fire and forget — don't block agent_end
+            // Determine scope: agent-specific facts use agent_id, otherwise global
+            const factScope = memoryState.agentId && memoryState.agentId !== "main" ? memoryState.agentId : "global";
+
             extractFacts(conversationText, memoryBankConfig)
               .then(async (facts) => {
                 for (const fact of facts) {
                   try {
-                    await consolidateFact(fact, udb.db, memoryBankConfig, deps.lanceManager, api.logger);
+                    await consolidateFact(fact, udb.db, memoryBankConfig, deps.lanceManager, api.logger, factScope);
                   } catch (consErr) {
                     api.logger.warn?.("memory-bank: consolidation error:", String(consErr).slice(0, 100));
                   }

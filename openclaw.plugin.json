@@ -28,6 +28,11 @@
       "sensitive": false,
       "placeholder": "5",
       "help": "Number of vector search results to inject on agent start."
+    },
+    "memoryBank.extractionApiKey": {
+      "label": "Extraction API Key",
+      "sensitive": true,
+      "help": "API key for the extraction LLM endpoint (required for Anthropic/OpenAI hosted models, optional for local Ollama)."
     }
   },
   "configSchema": {
@@ -51,7 +56,9 @@
           "minConversationLength": { "type": "number" },
           "consolidationThreshold": { "type": "number" },
           "maxFactsPerTurn": { "type": "number" },
-          "ragTopK": { "type": "number" }
+          "ragTopK": { "type": "number" },
+          "contradictionDetection": { "type": "boolean", "description": "Enable LLM-based contradiction detection (default: true)" },
+          "maintenanceOnStartup": { "type": "boolean", "description": "Run TTL expiry + confidence decay on startup (default: true)" }
         }
       }
     }

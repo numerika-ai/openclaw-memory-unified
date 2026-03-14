@@ -287,9 +287,11 @@ export function createRagInjectionHook(deps: HookDependencies) {
           const mbConfig = deps.memoryBankConfig;
           const queryEmb = await qwenEmbed(prompt);
           if (queryEmb) {
+            // Filter by status=active and scope (global + current agent's scope)
+            const currentScope = memoryState.agentId ?? "main";
             const activeFacts = udb.db.prepare(
-              "SELECT id, topic, fact, confidence FROM memory_facts WHERE expired_at IS NULL AND confidence > 0.3 ORDER BY confidence DESC LIMIT 50"
-            ).all() as Array<Pick<MemoryFact, "id" | "topic" | "fact" | "confidence">>;
+              "SELECT id, topic, fact, confidence FROM memory_facts WHERE status = 'active' AND confidence > 0.3 AND (scope = 'global' OR scope = ?) ORDER BY confidence DESC LIMIT 50"
+            ).all(currentScope) as Array<Pick<MemoryFact, "id" | "topic" | "fact" | "confidence">>;
 
             const scored: Array<{ id: number; topic: string; fact: string; confidence: number; similarity: number }> = [];
             for (const f of activeFacts) {

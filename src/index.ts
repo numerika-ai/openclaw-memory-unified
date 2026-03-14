@@ -24,6 +24,7 @@ import { qwenSemanticSearch } from "./embedding/ollama";
 
 // Memory Bank
 import { DEFAULT_TOPICS } from "./memory-bank/topics";
+import { runMaintenance } from "./memory-bank/maintenance";
 import type { MemoryBankConfig } from "./memory-bank/types";
 
 // Hooks
@@ -35,6 +36,7 @@ import { createUnifiedSearchTool } from "./tools/unified-search";
 import { createUnifiedStoreTool } from "./tools/unified-store";
 import { createUnifiedConversationsTool } from "./tools/unified-conversations";
 import { createUnifiedIndexFilesTool } from "./tools/file-indexer";
+import { createMemoryBankManageTool } from "./tools/memory-bank-manage";
 
 // Utils
 import { chunkText, autoTag, summarize, extractKeywords } from "./utils/helpers";
@@ -115,6 +117,16 @@ const memoryUnifiedPlugin = {
       } catch (seedErr) {
         api.logger.warn?.("memory-unified: topic seed failed:", String(seedErr));
       }
+
+      // Run maintenance on startup (TTL expiry + confidence decay)
+      try {
+        const mResult = runMaintenance(udb.db, api.logger);
+        if (mResult.expired > 0 || mResult.decayed > 0) {
+          api.logger.info?.(`memory-unified: startup maintenance — expired=${mResult.expired}, decayed=${mResult.decayed}`);
+        }
+      } catch (maintErr) {
+        api.logger.warn?.("memory-unified: startup maintenance failed:", String(maintErr));
+      }
     }
 
     api.logger.info?.(`memory-unified: initialized (db: ${resolvedDbPath})`);
@@ -181,6 +193,7 @@ const memoryUnifiedPlugin = {
     api.registerTool(createUnifiedStoreTool(udb, null, lanceManager), { name: "unified_store" });
     api.registerTool(createUnifiedConversationsTool(udb), { name: "unified_conversations" });
     api.registerTool(createUnifiedIndexFilesTool(udb), { name: "unified_index_files" });
+    api.registerTool(createMemoryBankManageTool(udb.db), { name: "memory_bank_manage" });
 
     // ========================================================================
     // CLI: openclaw ingest <path>

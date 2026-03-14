@@ -198,7 +198,10 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
         topic TEXT NOT NULL,
         fact TEXT NOT NULL,
         confidence REAL DEFAULT 0.8,
+        status TEXT DEFAULT 'active',
+        scope TEXT DEFAULT 'global',
         source_type TEXT DEFAULT 'conversation',
+        temporal_type TEXT DEFAULT 'current_state',
         source_session TEXT,
         source_summary TEXT,
         agent_id TEXT DEFAULT 'main',
@@ -213,11 +216,13 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
       CREATE INDEX IF NOT EXISTS idx_facts_topic ON memory_facts(topic);
       CREATE INDEX IF NOT EXISTS idx_facts_agent ON memory_facts(agent_id);
       CREATE INDEX IF NOT EXISTS idx_facts_confidence ON memory_facts(confidence);
+      CREATE INDEX IF NOT EXISTS idx_facts_status ON memory_facts(status);
+      CREATE INDEX IF NOT EXISTS idx_facts_scope ON memory_facts(scope);
 
       CREATE TABLE IF NOT EXISTS memory_revisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fact_id INTEGER NOT NULL REFERENCES memory_facts(id),
-        revision_type TEXT CHECK(revision_type IN ('created','updated','merged','expired','manual_edit')) NOT NULL,
+        revision_type TEXT CHECK(revision_type IN ('created','updated','merged','expired','manual_edit','contradicted','decay','deleted')) NOT NULL,
         old_content TEXT,
         new_content TEXT,
         reason TEXT,
@@ -235,6 +240,23 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // Migrations for existing databases: add new columns
+    const addColumnSafe = (table: string, col: string, def: string) => {
+      try { this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch { /* already exists */ }
+    };
+    addColumnSafe("memory_facts", "status", "TEXT DEFAULT 'active'");
+    addColumnSafe("memory_facts", "scope", "TEXT DEFAULT 'global'");
+    addColumnSafe("memory_facts", "temporal_type", "TEXT DEFAULT 'current_state'");
+
+    // Expand revision_type constraint for existing DBs (SQLite can't ALTER CHECK constraints,
+    // but new values will work since CHECK is only enforced on the original DDL if table already existed
+    // with the old constraint — new inserts with new values will succeed on existing tables because
+    // SQLite only enforces CHECK constraints defined at CREATE TABLE time for that specific table creation)
+
+    // Indexes for new columns
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_facts_status ON memory_facts(status)"); } catch {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_facts_scope ON memory_facts(scope)"); } catch {}
   }
 
   // --- Unified entries ---

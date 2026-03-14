@@ -4,6 +4,7 @@
 
 export { extractFacts } from "./extractor";
 export { consolidateFact } from "./consolidator";
+export { runMaintenance } from "./maintenance";
 export { DEFAULT_TOPICS } from "./topics";
 export type {
   MemoryFact,
@@ -12,4 +13,6 @@ export type {
   ExtractedFact,
   ConsolidationResult,
   MemoryBankConfig,
+  FactStatus,
+  TemporalType,
 } from "./types";
