@@ -3,7 +3,7 @@
  */
 
 const DEFAULT_DB_PATH = "/home/hermes/.openclaw/workspace/skill-memory.db";
-const ALLOWED_KEYS = ["dbPath", "ragSlim", "logToolCalls", "trajectoryTracking", "ragTopK", "memoryBank"];
+const ALLOWED_KEYS = ["dbPath", "ragSlim", "logToolCalls", "trajectoryTracking", "ragTopK", "memoryBank", "embeddingDim", "embeddingModel", "rerankUrl", "rerankEnabled"];
 
 export interface UnifiedMemoryConfig {
   dbPath: string;
@@ -11,6 +11,10 @@ export interface UnifiedMemoryConfig {
   logToolCalls: boolean;
   trajectoryTracking: boolean;
   ragTopK: number;
+  embeddingDim: number;
+  embeddingModel: string;
+  rerankUrl: string;
+  rerankEnabled: boolean;
   memoryBank?: {
     enabled: boolean;
     extractionModel: string;
@@ -52,6 +56,10 @@ export const unifiedConfigSchema = {
         logToolCalls: true,
         trajectoryTracking: true,
         ragTopK: 5,
+        embeddingDim: 2048,
+        embeddingModel: "nvidia/llama-nemotron-embed-1b-v2",
+        rerankUrl: "http://localhost:8081/rerank",
+        rerankEnabled: true,
       };
     }
     const cfg = value as Record<string, unknown>;
@@ -93,6 +101,10 @@ export const unifiedConfigSchema = {
       logToolCalls: cfg.logToolCalls !== false,
       trajectoryTracking: cfg.trajectoryTracking !== false,
       ragTopK,
+      embeddingDim: typeof cfg.embeddingDim === "number" ? cfg.embeddingDim : 2048,
+      embeddingModel: typeof cfg.embeddingModel === "string" ? cfg.embeddingModel : "nvidia/llama-nemotron-embed-1b-v2",
+      rerankUrl: typeof cfg.rerankUrl === "string" ? cfg.rerankUrl : "http://localhost:8081/rerank",
+      rerankEnabled: cfg.rerankEnabled !== false,
       memoryBank,
     };
   },

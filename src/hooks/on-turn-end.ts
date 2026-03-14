@@ -29,6 +29,10 @@ interface NativeLanceManager {
   addEntry(entryId: number, text: string): Promise<boolean>;
 }
 
+interface FactEmbeddingStore {
+  storeFactEmbedding(factId: number, embeddingBuf: Buffer): void;
+}
+
 interface HookDependencies {
   udb: UnifiedDB;
   ruflo: RufloHNSW | null;
@@ -36,6 +40,7 @@ interface HookDependencies {
   cfg: UnifiedMemoryConfig;
   memoryState: MemoryState;
   memoryBankConfig?: MemoryBankConfig;
+  embeddingStore?: FactEmbeddingStore | null;
 }
 
 /**
@@ -371,7 +376,7 @@ export function createAgentEndHook(deps: HookDependencies) {
               .then(async (facts) => {
                 for (const fact of facts) {
                   try {
-                    await consolidateFact(fact, udb.db, memoryBankConfig, deps.lanceManager, api.logger, factScope);
+                    await consolidateFact(fact, udb.db, memoryBankConfig, deps.lanceManager, api.logger, factScope, deps.embeddingStore);
                   } catch (consErr) {
                     api.logger.warn?.("memory-bank: consolidation error:", String(consErr).slice(0, 100));
                   }

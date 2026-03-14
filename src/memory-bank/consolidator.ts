@@ -4,12 +4,16 @@
  */
 
 import type { Database } from "better-sqlite3";
-import { qwenEmbed, cosineSim } from "../embedding/ollama";
+import { embed, cosineSim, embeddingToBuffer } from "../embedding/nemotron";
 import type { ExtractedFact, ConsolidationResult, MemoryBankConfig, MemoryFact } from "./types";
 
 interface NativeLanceManager {
   isReady(): boolean;
   addEntry(entryId: number, text: string): Promise<boolean>;
+}
+
+interface FactEmbeddingStore {
+  storeFactEmbedding(factId: number, embeddingBuf: Buffer): void;
 }
 
 /**
@@ -74,9 +78,17 @@ export async function consolidateFact(
   lanceManager: NativeLanceManager | null,
   logger: { info?(...args: unknown[]): void; warn?(...args: unknown[]): void },
   scope?: string,
+  embeddingStore?: FactEmbeddingStore | null,
 ): Promise<ConsolidationResult> {
-  // Embed the new fact
-  const newEmb = await qwenEmbed(newFact.fact);
+  // Embed the new fact using Nemotron (or legacy Qwen)
+  const newEmb = await embed(newFact.fact, "passage");
+
+  // Helper to store embedding in sqlite-vec
+  const storeVec = (factId: number, emb: number[]) => {
+    if (embeddingStore) {
+      try { embeddingStore.storeFactEmbedding(factId, embeddingToBuffer(emb)); } catch {}
+    }
+  };
 
   // If embedding fails, just create a new fact without vector dedup
   if (!newEmb) {
@@ -94,7 +106,7 @@ export async function consolidateFact(
   let bestMatch: (typeof existing)[0] | null = null;
 
   for (const ex of existing) {
-    const exEmb = await qwenEmbed(ex.fact);
+    const exEmb = await embed(ex.fact, "passage");
     if (!exEmb) continue;
     const sim = cosineSim(newEmb, exEmb);
     if (sim > bestSim) {
@@ -120,6 +132,8 @@ export async function consolidateFact(
     db.prepare("UPDATE memory_facts SET fact = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .run(newFact.fact, Math.max(bestMatch.confidence, newFact.confidence), bestMatch.id);
     logRevision(db, bestMatch.id, "updated", oldContent, newFact.fact, `content update (sim=${bestSim.toFixed(3)})`);
+    // Re-embed updated fact
+    storeVec(bestMatch.id, newEmb);
     logger.info?.(`memory-bank: UPDATE fact #${bestMatch.id} (sim=${bestSim.toFixed(3)})`);
     return { action: "updated", factId: bestMatch.id, similarity: bestSim };
   }
@@ -137,6 +151,7 @@ export async function consolidateFact(
       // Create the new (corrected) fact
       const factId = insertFact(db, newFact, scope);
       logRevision(db, factId, "created", null, newFact.fact, `replaces contradicted fact #${bestMatch.id} (sim=${bestSim.toFixed(3)})`);
+      storeVec(factId, newEmb);
 
       logger.info?.(`memory-bank: CONTRADICTED fact #${bestMatch.id} → new fact #${factId} (sim=${bestSim.toFixed(3)})`);
       return { action: "contradicted", factId, similarity: bestSim };
@@ -147,6 +162,7 @@ export async function consolidateFact(
   // Below threshold or no contradiction: create new fact
   const factId = insertFact(db, newFact, scope);
   logRevision(db, factId, "created", null, newFact.fact, bestSim > 0 ? `new (best sim=${bestSim.toFixed(3)})` : "new (no similar facts)");
+  storeVec(factId, newEmb);
 
   // Embed in LanceDB (fire and forget)
   if (lanceManager?.isReady()) {

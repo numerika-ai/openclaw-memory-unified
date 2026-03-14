@@ -1,7 +1,8 @@
 import type { PluginApi, UnifiedDB, RufloHNSW } from "../types";
 import type { UnifiedMemoryConfig } from "../config";
-import type { MemoryBankConfig, MemoryFact } from "../memory-bank/types";
-import { qwenEmbed, cosineSim } from "../embedding/ollama";
+import type { MemoryBankConfig } from "../memory-bank/types";
+import { embed, embeddingToBuffer } from "../embedding/nemotron";
+import { rerankResults, type RerankCandidate } from "../reranking/nemotron-rerank";
 import { extractAgentFromSessionKey } from "../utils/helpers";
 
 // State variables that need to be shared across hooks
@@ -26,6 +27,10 @@ interface ExtractKeywordsFunction {
   (text: string): string[];
 }
 
+interface FactVecSearch {
+  searchFactsByVector(queryEmbeddingBuf: Buffer, topK: number, scope?: string): Array<{ factId: number; distance: number; topic: string; fact: string; confidence: number }>;
+}
+
 interface HookDependencies {
   udb: UnifiedDB;
   ruflo: RufloHNSW | null;
@@ -35,6 +40,7 @@ interface HookDependencies {
   qwenSemanticSearch: QwenSearchFunction;
   extractKeywords: ExtractKeywordsFunction;
   memoryBankConfig?: MemoryBankConfig;
+  factVecSearch?: FactVecSearch | null;
 }
 
 /**
@@ -204,6 +210,32 @@ export function createRagInjectionHook(deps: HookDependencies) {
       }
 
       // ============================================================
+      // STEP 2.6: Rerank vector search results (Nemotron Rerank 1B)
+      // ============================================================
+      if (cfg.rerankEnabled && slimLines.length > 10) {
+        try {
+          // Collect all vec/qwen candidates for reranking
+          const rerankCandidates: RerankCandidate[] = slimLines
+            .filter((l) => l.startsWith("[vec]") || l.startsWith("[qwen]"))
+            .map((l, i) => ({ id: i, text: l, score: 0 }));
+
+          if (rerankCandidates.length > 5) {
+            const reranked = await rerankResults(prompt, rerankCandidates, 5);
+            if (reranked.length > 0) {
+              // Replace vec/qwen lines with reranked subset
+              const nonVecLines = slimLines.filter((l) => !l.startsWith("[vec]") && !l.startsWith("[qwen]"));
+              const rerankedLines = reranked.map((r) => `[reranked] ${r.text.replace(/^\[(vec|qwen)\]\s*/, "")} (rerank=${r.score.toFixed(3)})`);
+              slimLines.length = 0;
+              slimLines.push(...nonVecLines, ...rerankedLines);
+              api.logger.info?.(`memory-unified: reranked ${rerankCandidates.length} → ${reranked.length} results`);
+            }
+          }
+        } catch (rerankErr) {
+          api.logger.warn?.("memory-unified: rerank failed:", rerankErr);
+        }
+      }
+
+      // ============================================================
       // STEP 3: Qwen3 semantic search
       // ============================================================
       if (!matchedProcedure) {
@@ -280,44 +312,67 @@ export function createRagInjectionHook(deps: HookDependencies) {
       }
 
       // ============================================================
-      // STEP 6: Memory Bank facts (semantic search)
+      // STEP 6: Memory Bank facts (pre-embedded sqlite-vec search)
       // ============================================================
       if (deps.memoryBankConfig?.enabled) {
         try {
           const mbConfig = deps.memoryBankConfig;
-          const queryEmb = await qwenEmbed(prompt);
-          if (queryEmb) {
-            // Filter by status=active and scope (global + current agent's scope)
+          const queryEmb = await embed(prompt, "query");
+          if (queryEmb && deps.factVecSearch) {
             const currentScope = memoryState.agentId ?? "main";
-            const activeFacts = udb.db.prepare(
-              "SELECT id, topic, fact, confidence FROM memory_facts WHERE status = 'active' AND confidence > 0.3 AND (scope = 'global' OR scope = ?) ORDER BY confidence DESC LIMIT 50"
-            ).all(currentScope) as Array<Pick<MemoryFact, "id" | "topic" | "fact" | "confidence">>;
+            const vecResults = deps.factVecSearch.searchFactsByVector(
+              embeddingToBuffer(queryEmb),
+              mbConfig.ragTopK * 2, // fetch extra for filtering
+              currentScope,
+            );
 
-            const scored: Array<{ id: number; topic: string; fact: string; confidence: number; similarity: number }> = [];
-            for (const f of activeFacts) {
-              const fEmb = await qwenEmbed(f.fact);
-              if (!fEmb) continue;
-              const sim = cosineSim(queryEmb, fEmb);
-              if (sim > 0.35) {
-                scored.push({ ...f, similarity: sim });
-              }
-            }
-
-            scored.sort((a, b) => b.similarity - a.similarity);
-            const topFacts = scored.slice(0, mbConfig.ragTopK);
+            // Convert distance to similarity (cosine distance: sim = 1 - dist)
+            const topFacts = vecResults
+              .map((r) => ({ ...r, similarity: 1 - r.distance }))
+              .filter((r) => r.similarity > 0.35)
+              .slice(0, mbConfig.ragTopK);
 
             if (topFacts.length > 0) {
               slimLines.push("[memory bank]");
               for (const f of topFacts) {
                 slimLines.push(`  [${f.topic}] ${f.fact} (${(f.confidence * 100).toFixed(0)}%)`);
-                // Update access stats
+                try {
+                  udb.db.prepare(
+                    "UPDATE memory_facts SET access_count = access_count + 1, last_accessed_at = CURRENT_TIMESTAMP WHERE id = ?"
+                  ).run(f.factId);
+                } catch {}
+              }
+              api.logger.info?.(`memory-bank: injected ${topFacts.length} facts via sqlite-vec`);
+            }
+          } else if (queryEmb) {
+            // Fallback: no vec table yet, use old per-fact embedding (slow)
+            const currentScope = memoryState.agentId ?? "main";
+            const activeFacts = udb.db.prepare(
+              "SELECT id, topic, fact, confidence FROM memory_facts WHERE status = 'active' AND confidence > 0.3 AND (scope = 'global' OR scope = ?) ORDER BY confidence DESC LIMIT 50"
+            ).all(currentScope) as Array<{ id: number; topic: string; fact: string; confidence: number }>;
+
+            const scored: Array<{ id: number; topic: string; fact: string; confidence: number; similarity: number }> = [];
+            for (const f of activeFacts) {
+              const fEmb = await embed(f.fact, "passage");
+              if (!fEmb) continue;
+              const { cosineSim } = await import("../embedding/nemotron");
+              const sim = cosineSim(queryEmb, fEmb);
+              if (sim > 0.35) scored.push({ ...f, similarity: sim });
+            }
+
+            scored.sort((a, b) => b.similarity - a.similarity);
+            const topFacts = scored.slice(0, mbConfig.ragTopK);
+            if (topFacts.length > 0) {
+              slimLines.push("[memory bank]");
+              for (const f of topFacts) {
+                slimLines.push(`  [${f.topic}] ${f.fact} (${(f.confidence * 100).toFixed(0)}%)`);
                 try {
                   udb.db.prepare(
                     "UPDATE memory_facts SET access_count = access_count + 1, last_accessed_at = CURRENT_TIMESTAMP WHERE id = ?"
                   ).run(f.id);
                 } catch {}
               }
-              api.logger.info?.(`memory-bank: injected ${topFacts.length} facts into RAG`);
+              api.logger.info?.(`memory-bank: injected ${topFacts.length} facts (fallback mode)`);
             }
           }
         } catch (mbErr) {

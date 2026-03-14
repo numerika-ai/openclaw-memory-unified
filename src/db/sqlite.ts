@@ -14,11 +14,13 @@ import type { EntryType } from "../config";
 
 export class UnifiedDBImpl implements UnifiedDB {
   public db: Database.Database;
+  public embeddingDim: number;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, embeddingDim: number = 2048) {
     const dir = path.dirname(dbPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     this.db = new Database(dbPath);
+    this.embeddingDim = embeddingDim;
     sqliteVec.load(this.db);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
@@ -241,6 +243,14 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
       );
     `);
 
+    // Memory Bank vector table for pre-embedded facts (sqlite-vec)
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_vec USING vec0(
+        fact_id INTEGER PRIMARY KEY,
+        embedding float[${this.embeddingDim}]
+      );
+    `);
+
     // Migrations for existing databases: add new columns
     const addColumnSafe = (table: string, col: string, def: string) => {
       try { this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch { /* already exists */ }
@@ -402,6 +412,43 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
       AND julianday('now') - julianday(created_at) > ttl_days
     `).run();
     return result.changes;
+  }
+
+  // --- Memory Bank vector operations ---
+  storeFactEmbedding(factId: number, embeddingBuf: Buffer): void {
+    // Upsert: delete existing then insert (sqlite-vec doesn't support ON CONFLICT)
+    this.db.prepare("DELETE FROM memory_facts_vec WHERE fact_id = ?").run(factId);
+    this.db.prepare("INSERT INTO memory_facts_vec (fact_id, embedding) VALUES (?, ?)").run(factId, embeddingBuf);
+  }
+
+  searchFactsByVector(queryEmbeddingBuf: Buffer, topK: number = 5, scope?: string): Array<{ factId: number; distance: number; topic: string; fact: string; confidence: number }> {
+    // sqlite-vec KNN search joined with memory_facts for metadata
+    const scopeFilter = scope
+      ? "AND mf.status = 'active' AND mf.confidence > 0.3 AND (mf.scope = 'global' OR mf.scope = ?)"
+      : "AND mf.status = 'active' AND mf.confidence > 0.3";
+
+    const query = `
+      SELECT v.fact_id, v.distance, mf.topic, mf.fact, mf.confidence
+      FROM memory_facts_vec v
+      JOIN memory_facts mf ON mf.id = v.fact_id
+      WHERE v.embedding MATCH ?
+      AND k = ?
+      ${scopeFilter}
+      ORDER BY v.distance ASC
+    `;
+
+    const params: any[] = [queryEmbeddingBuf, topK];
+    if (scope) params.push(scope);
+
+    return this.db.prepare(query).all(...params) as any[];
+  }
+
+  getFactsWithoutEmbeddings(): Array<{ id: number; fact: string }> {
+    return this.db.prepare(`
+      SELECT mf.id, mf.fact FROM memory_facts mf
+      LEFT JOIN memory_facts_vec v ON v.fact_id = mf.id
+      WHERE v.fact_id IS NULL AND mf.status = 'active'
+    `).all() as any[];
   }
 
   close(): void { this.db.close(); }

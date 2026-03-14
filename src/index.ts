@@ -25,6 +25,7 @@ import { qwenSemanticSearch } from "./embedding/ollama";
 // Memory Bank
 import { DEFAULT_TOPICS } from "./memory-bank/topics";
 import { runMaintenance } from "./memory-bank/maintenance";
+import { backfillFactEmbeddings } from "./memory-bank/backfill";
 import type { MemoryBankConfig } from "./memory-bank/types";
 
 // Hooks
@@ -65,7 +66,7 @@ const memoryUnifiedPlugin = {
 
     let udb: UnifiedDBImpl;
     try {
-      udb = new UnifiedDBImpl(resolvedDbPath);
+      udb = new UnifiedDBImpl(resolvedDbPath, cfg.embeddingDim);
     } catch (err) {
       api.logger.error?.("memory-unified: DB init failed:", err);
       throw err;
@@ -144,6 +145,7 @@ const memoryUnifiedPlugin = {
         qwenSemanticSearch,
         extractKeywords,
         memoryBankConfig,
+        factVecSearch: udb,
       });
 
       api.on("before_agent_start", async (event) => {
@@ -179,6 +181,7 @@ const memoryUnifiedPlugin = {
         cfg,
         memoryState,
         memoryBankConfig,
+        embeddingStore: udb,
       });
 
       api.on("agent_end", async (event) => {
@@ -270,6 +273,12 @@ const memoryUnifiedPlugin = {
         // Kick off LanceDB bulk indexing in background (fire and forget)
         if (lanceManager?.isReady()) {
           lanceManager.bulkIndex().catch(err => api.logger.warn?.("memory-unified: LanceDB bulk failed:", String(err)));
+        }
+        // Backfill memory_facts_vec for existing facts missing embeddings
+        if (memoryBankConfig?.enabled) {
+          backfillFactEmbeddings(udb, api.logger).catch(err =>
+            api.logger.warn?.("memory-unified: fact backfill failed:", String(err))
+          );
         }
       },
       stop: () => {
