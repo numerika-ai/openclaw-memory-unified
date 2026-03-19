@@ -417,8 +417,9 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
   // --- Memory Bank vector operations ---
   storeFactEmbedding(factId: number, embeddingBuf: Buffer): void {
     // Upsert: delete existing then insert (sqlite-vec doesn't support ON CONFLICT)
+    // CAST required: sqlite-vec vec0 rejects JS numbers as primary keys — needs SQLite INTEGER type
     this.db.prepare("DELETE FROM memory_facts_vec WHERE fact_id = ?").run(factId);
-    this.db.prepare("INSERT INTO memory_facts_vec (fact_id, embedding) VALUES (?, ?)").run(factId, embeddingBuf);
+    this.db.prepare("INSERT INTO memory_facts_vec (fact_id, embedding) VALUES (CAST(? AS INTEGER), ?)").run(factId, embeddingBuf);
   }
 
   searchFactsByVector(queryEmbeddingBuf: Buffer, topK: number = 5, scope?: string): Array<{ factId: number; distance: number; topic: string; fact: string; confidence: number }> {
