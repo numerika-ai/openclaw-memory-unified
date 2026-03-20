@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDef, ToolResult, UnifiedDB } from "../types";
 import type { EntryType } from "../config";
-import type { VectorManager } from "../db/lance-manager";
+import type { VectorManager } from "../db/vector-manager";
 
 export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: VectorManager | null): ToolDef {
   return {

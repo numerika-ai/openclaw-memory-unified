@@ -16,7 +16,7 @@ import type { PluginApi } from "./types";
 
 // Database
 import { UnifiedDBImpl } from "./db/sqlite";
-import { VectorManager } from "./db/lance-manager";
+import { VectorManager } from "./db/vector-manager";
 import { SqliteVecStore } from "./db/sqlite-vec";
 
 // Embedding

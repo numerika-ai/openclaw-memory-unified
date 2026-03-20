@@ -16,7 +16,7 @@ export class UnifiedDBImpl implements UnifiedDB {
   public db: Database.Database;
   public embeddingDim: number;
 
-  constructor(dbPath: string, embeddingDim: number = 2048) {
+  constructor(dbPath: string, embeddingDim: number = 4096) {
     const dir = path.dirname(dbPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     this.db = new Database(dbPath);

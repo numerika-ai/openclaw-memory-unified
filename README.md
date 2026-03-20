@@ -1,13 +1,13 @@
 # memory-unified — OpenClaw Plugin
 
-Unified memory layer for [OpenClaw](https://github.com/openclaw/openclaw) that merges **SQLite** structured storage with **sqlite-vec** vector search and **Nemotron Embed 1B v2** local embeddings. Zero-cost semantic memory for AI agents.
+Unified memory layer for [OpenClaw](https://github.com/openclaw/openclaw) that merges **SQLite** structured storage with **sqlite-vec** vector search and **Qwen3-Embedding-8B** local embeddings. Zero-cost semantic memory for AI agents.
 
 ## What It Does
 
 One plugin that gives your agent:
 - **Structured memory** — SQLite with 8 entry types, FTS5 full-text search
-- **Semantic search** — sqlite-vec cosine KNN with 2048-dim Nemotron Embed 1B v2 embeddings
-- **RAG injection** — multi-layer pipeline: FTS5 + vector search + Nemotron Rerank 1B cross-encoder + Memory Bank facts
+- **Semantic search** — sqlite-vec cosine KNN with 4096-dim Qwen3-Embedding-8B embeddings
+- **RAG injection** — multi-layer pipeline: FTS5 + vector search + Nemotron Rerank 1B v2 cross-encoder + Memory Bank facts
 - **Memory Bank v2** — long-term fact extraction, contradiction detection, confidence decay, TTL management (full Vertex AI Memory Bank feature parity + extras)
 - **Reranking** — Nemotron Rerank 1B v2 cross-encoder for improved RAG accuracy
 - **Skill learning** — tracks tool usage, detects patterns, proposes improvements
@@ -28,11 +28,11 @@ One plugin that gives your agent:
 │  │  SQLite tables   │  sqlite-vec (vec0)      │   │
 │  │                  │                         │   │
 │  │ • unified_entries│ • vec_entries            │   │
-│  │ • skills         │   float[2048] cosine    │   │
+│  │ • skills         │   float[4096] cosine    │   │
 │  │ • conversations  │   entry_type filtering  │   │
 │  │ • patterns       │                         │   │
 │  │ • memory_facts   │ • memory_facts_vec      │   │
-│  │ • memory_topics  │   float[2048] cosine    │   │
+│  │ • memory_topics  │   float[4096] cosine    │   │
 │  │ • skill_execs    │   pre-embedded facts    │   │
 │  │ • FTS5 index     │                         │   │
 │  └──────────────────┴─────────────────────────┘   │
@@ -41,8 +41,8 @@ One plugin that gives your agent:
 │    (exact match)        (meaning-based KNN)         │
 │                                                    │
 │  ┌─────────────────────────────────────────────┐   │
-│  │  GPU Models (RTX 3090, ~5.3 GB VRAM)       │   │
-│  │  • Nemotron Embed 1B v2 (2048-dim, TEI)    │   │
+│  │  GPU Models (RTX 3090, ~20.6 GB VRAM)      │   │
+│  │  • Qwen3-Embedding-8B (4096-dim, vLLM)     │   │
 │  │  • Nemotron Rerank 1B v2 (cross-encoder)   │   │
 │  └─────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────┘
@@ -105,15 +105,15 @@ Full Vertex AI Memory Bank feature parity plus extras:
 
 ## Embedding Setup
 
-Uses Nemotron Embed 1B v2 via TEI (HuggingFace Text Embeddings Inference) on local GPU:
+Uses Qwen3-Embedding-8B via vLLM (OpenAI-compatible API) on local GPU:
 
 ```
-Model: nvidia/llama-nemotron-embed-1b-v2
-Dimensions: 2048
-Runtime: TEI (HuggingFace Text Embeddings Inference)
-GPU: RTX 3090 (~2.7 GB VRAM)
-Latency: ~15ms/query
-Batch support: Yes (TEI native)
+Model: Qwen/Qwen3-Embedding-8B (FP16)
+Dimensions: 4096
+Runtime: vLLM (OpenAI-compatible /v1/embeddings)
+GPU: RTX 3090 (~15 GB VRAM)
+Latency: ~20ms/query
+Batch support: Yes (vLLM native)
 ```
 
 ## Reranking
@@ -121,8 +121,8 @@ Batch support: Yes (TEI native)
 Nemotron Rerank 1B v2 cross-encoder for improved RAG accuracy:
 
 ```
-Model: nvidia/llama-nemotron-rerank-1b-v2
-Runtime: TEI
+Model: nvidia/llama-nemotron-rerank-1b-v2 (FP16)
+Runtime: vLLM
 GPU: RTX 3090 (~2.6 GB VRAM)
 Latency: ~30ms/10 docs
 Endpoint: http://localhost:8082/rerank
@@ -155,7 +155,7 @@ Add to `openclaw.json`:
 
 ## Upgrade Plan
 
-See [UPGRADE-PLAN.md](UPGRADE-PLAN.md) for the full audit, identified issues, and phased improvement plan including future Qwen3-Embedding-8B migration.
+See [UPGRADE-PLAN.md](UPGRADE-PLAN.md) for the full audit and phased improvement plan.
 
 ## Docs
 

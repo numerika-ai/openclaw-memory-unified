@@ -1,46 +1,33 @@
 /**
- * embedding/nemotron.ts — Nemotron Embed 1B v2 via TEI (HuggingFace Text Embeddings Inference)
+ * embedding/nemotron.ts — Qwen3-Embedding-8B via vLLM (OpenAI-compatible /v1/embeddings)
  *
- * Supports query/passage prefixes per Nemotron requirements.
- * Backward compatible: if QWEN_EMBED_URL is set, falls back to Qwen behavior.
+ * Single backend: Qwen3-Embedding-8B on port 8080, 4096-dim.
+ * No query/passage prefixes needed (Qwen3 doesn't use them).
  */
 
 // ============================================================================
 // Configuration — env overrides with sensible defaults
 // ============================================================================
-const QWEN_EMBED_URL_ENV = process.env.QWEN_EMBED_URL;
-const QWEN_MODEL = "qwen3-embedding:8b";
+export const EMBED_URL = process.env.EMBED_URL ?? process.env.QWEN_EMBED_URL ?? "http://localhost:8080/v1/embeddings";
+export const EMBED_MODEL = process.env.EMBED_MODEL ?? process.env.QWEN_MODEL ?? "Qwen3-Embedding-8B";
+export const EMBED_DIM = parseInt(process.env.EMBED_DIM ?? "4096", 10);
 
-export const EMBED_URL = process.env.EMBED_URL ?? "http://localhost:8080/v1/embeddings";
-export const EMBED_MODEL = process.env.EMBED_MODEL ?? "nvidia/llama-nemotron-embed-1b-v2";
-export const EMBED_DIM = parseInt(process.env.EMBED_DIM ?? "2048", 10);
-
-// Nemotron requires prefixes for asymmetric retrieval
-export const QUERY_PREFIX = "query: ";
-export const PASSAGE_PREFIX = "passage: ";
-
-// Detect legacy mode
-const USE_QWEN_LEGACY = !!QWEN_EMBED_URL_ENV;
+// Max chars to send (Qwen3 supports 32K tokens, ~7500 chars is safe)
+const MAX_INPUT_CHARS = 7500;
 
 /**
- * Embed text using Nemotron (or legacy Qwen if QWEN_EMBED_URL is set).
+ * Embed text using Qwen3-Embedding-8B (OpenAI-compatible API).
  * @param text - text to embed
- * @param type - 'query' for search queries, 'passage' for documents/facts
+ * @param type - 'query' or 'passage' (kept for API compat, Qwen3 doesn't distinguish)
  */
 export async function embed(text: string, type: "query" | "passage" = "passage"): Promise<number[] | null> {
   try {
-    const url = USE_QWEN_LEGACY ? QWEN_EMBED_URL_ENV! : EMBED_URL;
-    const model = USE_QWEN_LEGACY ? QWEN_MODEL : EMBED_MODEL;
+    const input = text.slice(0, MAX_INPUT_CHARS);
 
-    // Apply prefix only for Nemotron (not legacy Qwen)
-    const input = USE_QWEN_LEGACY
-      ? text.slice(0, 2000)
-      : (type === "query" ? QUERY_PREFIX : PASSAGE_PREFIX) + text.slice(0, 7500);
-
-    const resp = await fetch(url, {
+    const resp = await fetch(EMBED_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input }),
+      body: JSON.stringify({ model: EMBED_MODEL, input }),
       signal: AbortSignal.timeout(15000),
     });
 
@@ -104,19 +91,12 @@ export async function embedBatch(texts: string[], type: "query" | "passage" = "p
   }
 
   try {
-    const url = USE_QWEN_LEGACY ? QWEN_EMBED_URL_ENV! : EMBED_URL;
-    const model = USE_QWEN_LEGACY ? QWEN_MODEL : EMBED_MODEL;
+    const inputs = texts.map(t => t.slice(0, MAX_INPUT_CHARS));
 
-    const inputs = texts.map(t =>
-      USE_QWEN_LEGACY
-        ? t.slice(0, 2000)
-        : (type === "query" ? QUERY_PREFIX : PASSAGE_PREFIX) + t.slice(0, 7500)
-    );
-
-    const resp = await fetch(url, {
+    const resp = await fetch(EMBED_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: inputs }),
+      body: JSON.stringify({ model: EMBED_MODEL, input: inputs }),
       signal: AbortSignal.timeout(30000),
     });
 
@@ -180,7 +160,7 @@ export async function loadSkillEmbeddings(db: any, logger: any): Promise<SkillEm
 
   skillEmbCache = results;
   skillEmbLoading = false;
-  logger.info?.(`memory-unified: Nemotron embedding cache loaded (${results.length} skills, ${EMBED_DIM}-dim)`);
+  logger.info?.(`memory-unified: Qwen3 embedding cache loaded (${results.length} skills, ${EMBED_DIM}-dim)`);
   return results;
 }
 

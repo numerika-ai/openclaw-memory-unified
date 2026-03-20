@@ -1,12 +1,13 @@
 /**
  * db/sqlite-vec.ts — sqlite-vec vector store (vec0 virtual table)
  *
- * Stores 2048-dim Nemotron Embed 1B v2 embeddings in the same SQLite
- * database file as unified_entries. Uses cosine distance for KNN search.
+ * Stores embeddings in the same SQLite database file as unified_entries.
+ * Dimension is read from EMBED_DIM env (default 4096). Uses cosine distance for KNN search.
  */
 
 import * as sqliteVec from "sqlite-vec";
 import type Database from "better-sqlite3";
+import { EMBED_DIM } from "../embedding/nemotron";
 
 export class SqliteVecStore {
     constructor(private db: Database.Database, private logger: any) {
@@ -19,7 +20,7 @@ export class SqliteVecStore {
         this.db.exec(`
             CREATE VIRTUAL TABLE IF NOT EXISTS vec_entries USING vec0(
                 entry_id INTEGER PRIMARY KEY,
-                embedding float[2048] distance_metric=cosine,
+                embedding float[${EMBED_DIM}] distance_metric=cosine,
                 entry_type TEXT,
                 +text TEXT
             );

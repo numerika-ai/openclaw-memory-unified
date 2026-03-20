@@ -1,8 +1,8 @@
 /**
- * db/lance-manager.ts — Vector index manager (sqlite-vec only)
+ * db/vector-manager.ts — Vector index manager (sqlite-vec only)
  *
  * Wraps SqliteVecStore with SQLite hnsw_meta tracking,
- * Nemotron embedding, and bulk indexing.
+ * Qwen3 embedding, and bulk indexing.
  */
 
 import Database from "better-sqlite3";
