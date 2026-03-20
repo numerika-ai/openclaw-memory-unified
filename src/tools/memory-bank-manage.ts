@@ -5,10 +5,14 @@
 import { Type } from "@sinclair/typebox";
 import type { Database } from "better-sqlite3";
 import type { ToolDef, ToolResult } from "../types";
-import { qwenEmbed, cosineSim } from "../embedding/ollama";
+import { qwenEmbed, cosineSim, embeddingToBuffer } from "../embedding/nemotron";
 import type { MemoryFact } from "../memory-bank/types";
 
-export function createMemoryBankManageTool(db: Database): ToolDef {
+interface FactVecSearch {
+  searchFactsByVector(queryEmbeddingBuf: Buffer, topK: number, scope?: string): Array<{ factId: number; distance: number; topic: string; fact: string; confidence: number }>;
+}
+
+export function createMemoryBankManageTool(db: Database, factVecSearch?: FactVecSearch | null): ToolDef {
   return {
     name: "memory_bank_manage",
     label: "Memory Bank Manager",
@@ -32,7 +36,7 @@ export function createMemoryBankManageTool(db: Database): ToolDef {
         case "list":
           return listFacts(db, params, limit);
         case "search":
-          return searchFacts(db, params, limit);
+          return searchFacts(db, params, limit, factVecSearch);
         case "add":
           return addFact(db, params);
         case "edit":
@@ -79,17 +83,13 @@ function listFacts(db: Database, params: Record<string, unknown>, limit: number)
   };
 }
 
-async function searchFacts(db: Database, params: Record<string, unknown>, limit: number): Promise<ToolResult> {
+async function searchFacts(db: Database, params: Record<string, unknown>, limit: number, factVecSearch?: FactVecSearch | null): Promise<ToolResult> {
   const query = params.query as string;
   if (!query) {
     return { content: [{ type: "text", text: "Error: query parameter required for search" }] };
   }
 
   const queryEmb = await qwenEmbed(query);
-
-  const activeFacts = db.prepare(
-    "SELECT id, topic, fact, confidence, status, scope FROM memory_facts WHERE status = 'active' ORDER BY confidence DESC LIMIT 100"
-  ).all() as Array<Pick<MemoryFact, "id" | "topic" | "fact" | "confidence" | "status" | "scope">>;
 
   if (!queryEmb) {
     // Fallback to LIKE search if embedding unavailable
@@ -105,6 +105,28 @@ async function searchFacts(db: Database, params: Record<string, unknown>, limit:
       details: { count: likeFacts.length, method: "text" },
     };
   }
+
+  // Vector-first: single sqlite-vec KNN query instead of O(n) per-fact embedding
+  if (factVecSearch) {
+    const vecResults = factVecSearch.searchFactsByVector(embeddingToBuffer(queryEmb), limit);
+    const topFacts = vecResults
+      .map(r => ({ ...r, similarity: 1 - r.distance }))
+      .filter(r => r.similarity > 0.3);
+
+    const lines = topFacts.map(f =>
+      `#${f.factId} [${f.topic}] (${(f.similarity * 100).toFixed(0)}% sim, ${(f.confidence * 100).toFixed(0)}% conf) ${f.fact}`
+    );
+
+    return {
+      content: [{ type: "text", text: `## Semantic Search Results (${topFacts.length})\n${lines.join("\n")}` }],
+      details: { count: topFacts.length, method: "semantic-vec" },
+    };
+  }
+
+  // Fallback: O(n) per-fact embedding (when sqlite-vec unavailable)
+  const activeFacts = db.prepare(
+    "SELECT id, topic, fact, confidence, status, scope FROM memory_facts WHERE status = 'active' ORDER BY confidence DESC LIMIT 100"
+  ).all() as Array<Pick<MemoryFact, "id" | "topic" | "fact" | "confidence" | "status" | "scope">>;
 
   const scored: Array<{ id: number; topic: string; fact: string; confidence: number; scope: string; similarity: number }> = [];
   for (const f of activeFacts) {

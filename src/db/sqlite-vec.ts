@@ -1,11 +1,8 @@
 /**
  * db/sqlite-vec.ts — sqlite-vec vector store (vec0 virtual table)
  *
- * Stores 4096-dim Qwen3 embeddings in the same SQLite database file
- * as unified_entries. Uses cosine distance for KNN search.
- *
- * Phase 1: dual-write alongside LanceDB (writes only, reads stay on LanceDB).
- * Phase 2: becomes the primary vector search backend.
+ * Stores 2048-dim Nemotron Embed 1B v2 embeddings in the same SQLite
+ * database file as unified_entries. Uses cosine distance for KNN search.
  */
 
 import * as sqliteVec from "sqlite-vec";
@@ -22,7 +19,7 @@ export class SqliteVecStore {
         this.db.exec(`
             CREATE VIRTUAL TABLE IF NOT EXISTS vec_entries USING vec0(
                 entry_id INTEGER PRIMARY KEY,
-                embedding float[4096] distance_metric=cosine,
+                embedding float[2048] distance_metric=cosine,
                 entry_type TEXT,
                 +text TEXT
             );

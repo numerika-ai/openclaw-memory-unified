@@ -68,13 +68,21 @@ export function createRagInjectionHook(deps: HookDependencies) {
       // STEP 1: FTS5 full-text search for matching SKILLS (priority)
       // ============================================================
       try {
-        // Strip audio/WhatsApp metadata — extract only user actual text
+        // Strip audio/WhatsApp metadata AND unified-memory injection — extract only user actual text
         let cleanPrompt = prompt;
-        const transcriptMatch = prompt.match(/Transcript:\s*\n?([\s\S]+?)$/i);
+        // Remove unified-memory block (injected by gateway, not user text)
+        cleanPrompt = cleanPrompt.replace(/<unified-memory>[\s\S]*?<\/unified-memory>\s*/gi, "");
+        // Remove conversation info metadata blocks
+        cleanPrompt = cleanPrompt.replace(/Conversation info \(untrusted metadata\):\s*```json[\s\S]*?```\s*/gi, "");
+        cleanPrompt = cleanPrompt.replace(/Sender \(untrusted metadata\):\s*```json[\s\S]*?```\s*/gi, "");
+        cleanPrompt = cleanPrompt.replace(/Replied message \(untrusted[^)]*\):\s*```json[\s\S]*?```\s*/gi, "");
+        // Remove pre-compaction flush instructions
+        cleanPrompt = cleanPrompt.replace(/Pre-compaction memory flush\.[\s\S]*?Current time:.*$/gim, "");
+        const transcriptMatch = cleanPrompt.match(/Transcript:\s*\n?([\s\S]+?)$/i);
         if (transcriptMatch) {
           cleanPrompt = transcriptMatch[1].trim();
         } else {
-          cleanPrompt = prompt.replace(/\[Audio\][\s\S]*?Transcript:\s*/i, "")
+          cleanPrompt = cleanPrompt.replace(/\[Audio\][\s\S]*?Transcript:\s*/i, "")
                               .replace(/\[WhatsApp[^\]]*\]\s*<media:[^>]+>\s*/gi, "")
                               .replace(/User text:\s*/gi, "")
                               .trim() || prompt;
@@ -212,7 +220,7 @@ export function createRagInjectionHook(deps: HookDependencies) {
       // ============================================================
       // STEP 2.6: Rerank vector search results (Nemotron Rerank 1B)
       // ============================================================
-      if (cfg.rerankEnabled && slimLines.length > 10) {
+      if (cfg.rerankEnabled && slimLines.length > 3) {
         try {
           // Collect all vec/qwen candidates for reranking
           const rerankCandidates: RerankCandidate[] = slimLines

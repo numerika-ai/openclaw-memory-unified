@@ -1,8 +1,8 @@
 /**
  * memory-unified — OpenClaw Plugin
  *
- * Merges USMD SQLite skill memory with LanceDB vector search.
- * Hooks: before_agent_start (RAG slim), on_tool_call (log to LanceDB),
+ * Merges USMD SQLite skill memory with sqlite-vec vector search.
+ * Hooks: before_agent_start (RAG slim), on_tool_call (log vectors),
  *        agent_end (trajectory end with success/failure label).
  * CLI:   openclaw ingest <path> — chunk, auto-tag, embed, store.
  */
@@ -16,11 +16,11 @@ import type { PluginApi } from "./types";
 
 // Database
 import { UnifiedDBImpl } from "./db/sqlite";
-import { NativeLanceManager } from "./db/lance-manager";
+import { VectorManager } from "./db/lance-manager";
 import { SqliteVecStore } from "./db/sqlite-vec";
 
 // Embedding
-import { qwenSemanticSearch } from "./embedding/ollama";
+import { qwenSemanticSearch } from "./embedding/nemotron";
 
 // Memory Bank
 import { DEFAULT_TOPICS } from "./memory-bank/topics";
@@ -47,8 +47,8 @@ import { chunkText, autoTag, summarize, extractKeywords } from "./utils/helpers"
 // ============================================================================
 const memoryUnifiedPlugin = {
   id: "memory-unified",
-  name: "Memory Unified (USMD + LanceDB)",
-  description: "Unified memory: USMD SQLite for structured skills + LanceDB for semantic search. RAG slim, tool logging, trajectory tracking.",
+  name: "Memory Unified (USMD + sqlite-vec)",
+  description: "Unified memory: USMD SQLite for structured skills + sqlite-vec for semantic search. RAG slim, tool logging, trajectory tracking.",
   kind: "memory" as const,
   configSchema: unifiedConfigSchema,
 
@@ -82,29 +82,16 @@ const memoryUnifiedPlugin = {
     };
 
     // ========================================================================
-    // sqlite-vec Vector Store (Phase 1: dual-write alongside LanceDB)
+    // sqlite-vec Vector Store + Vector Manager
     // ========================================================================
     let sqliteVecStore: SqliteVecStore | null = null;
+    let vectorManager: VectorManager | null = null;
     try {
       sqliteVecStore = new SqliteVecStore(udb.db, api.logger);
-      api.logger.info?.(`memory-unified: sqlite-vec store ready (${sqliteVecStore.count()} vectors)`);
+      vectorManager = new VectorManager(udb.db, sqliteVecStore, api.logger);
+      api.logger.info?.(`memory-unified: vector manager ready (${vectorManager.getCount()} vectors, sqlite-vec: ${sqliteVecStore.count()})`);
     } catch (vecErr) {
-      api.logger.warn?.('memory-unified: sqlite-vec init failed, continuing without:', String(vecErr));
-    }
-
-    // ========================================================================
-    // LanceDB Vector Index
-    // ========================================================================
-    let lanceManager: NativeLanceManager | null = null;
-    try {
-      lanceManager = new NativeLanceManager(resolvedDbPath, udb.db, api.logger);
-      // Attach sqlite-vec for dual-write
-      if (sqliteVecStore) {
-        lanceManager.setSqliteVecStore(sqliteVecStore);
-      }
-      api.logger.info?.(`memory-unified: LanceDB manager ready (${lanceManager.getCount()} vectors)`);
-    } catch (hnswErr) {
-      api.logger.warn?.('memory-unified: LanceDB manager init failed, continuing without:', String(hnswErr));
+      api.logger.warn?.('memory-unified: vector manager init failed, continuing without:', String(vecErr));
     }
 
     // ========================================================================
@@ -139,7 +126,7 @@ const memoryUnifiedPlugin = {
       const ragHook = createRagInjectionHook({
         udb,
         ruflo: null,
-        lanceManager,
+        lanceManager: vectorManager,
         cfg,
         memoryState,
         qwenSemanticSearch,
@@ -154,13 +141,13 @@ const memoryUnifiedPlugin = {
     }
 
     // ========================================================================
-    // Hook 2: on_tool_call → log to LanceDB with skill tag
+    // Hook 2: on_tool_call → log to vector store with skill tag
     // ========================================================================
     if (cfg.logToolCalls) {
       const toolCallHook = createToolCallLogHook({
         udb,
         ruflo: null,
-        lanceManager,
+        lanceManager: vectorManager,
         cfg,
         memoryState,
       });
@@ -177,7 +164,7 @@ const memoryUnifiedPlugin = {
       const agentEndHook = createAgentEndHook({
         udb,
         ruflo: null,
-        lanceManager,
+        lanceManager: vectorManager,
         cfg,
         memoryState,
         memoryBankConfig,
@@ -192,11 +179,11 @@ const memoryUnifiedPlugin = {
     // ========================================================================
     // Tools: Register all four tools
     // ========================================================================
-    api.registerTool(createUnifiedSearchTool(udb, lanceManager), { name: "unified_search" });
-    api.registerTool(createUnifiedStoreTool(udb, null, lanceManager), { name: "unified_store" });
+    api.registerTool(createUnifiedSearchTool(udb, vectorManager), { name: "unified_search" });
+    api.registerTool(createUnifiedStoreTool(udb, null, vectorManager), { name: "unified_store" });
     api.registerTool(createUnifiedConversationsTool(udb), { name: "unified_conversations" });
     api.registerTool(createUnifiedIndexFilesTool(udb), { name: "unified_index_files" });
-    api.registerTool(createMemoryBankManageTool(udb.db), { name: "memory_bank_manage" });
+    api.registerTool(createMemoryBankManageTool(udb.db, udb), { name: "memory_bank_manage" });
 
     // ========================================================================
     // CLI: openclaw ingest <path>
@@ -270,9 +257,9 @@ const memoryUnifiedPlugin = {
       id: "memory-unified",
       start: () => {
         api.logger.info?.(`memory-unified: service started (db: ${resolvedDbPath})`);
-        // Kick off LanceDB bulk indexing in background (fire and forget)
-        if (lanceManager?.isReady()) {
-          lanceManager.bulkIndex().catch(err => api.logger.warn?.("memory-unified: LanceDB bulk failed:", String(err)));
+        // Kick off bulk indexing in background (fire and forget)
+        if (vectorManager?.isReady()) {
+          vectorManager.bulkIndex().catch(err => api.logger.warn?.("memory-unified: bulk index failed:", String(err)));
         }
         // Backfill memory_facts_vec for existing facts missing embeddings
         if (memoryBankConfig?.enabled) {
@@ -282,10 +269,8 @@ const memoryUnifiedPlugin = {
         }
       },
       stop: () => {
-        // Save LanceDB state before shutdown
-        if (lanceManager?.isReady()) {
-          lanceManager.save();
-          api.logger.info?.("memory-unified: LanceDB saved on shutdown");
+        if (vectorManager?.isReady()) {
+          vectorManager.save();
         }
         udb.close();
         api.logger.info?.("memory-unified: service stopped");

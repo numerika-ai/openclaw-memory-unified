@@ -22,10 +22,30 @@ interface MaintenanceResult {
 export function runMaintenance(db: Database, logger: Logger): MaintenanceResult {
   const expired = expireFacts(db, logger);
   const decayed = decayConfidence(db, logger);
-  if (expired > 0 || decayed > 0) {
-    logger.info?.(`memory-bank maintenance: expired=${expired}, decayed=${decayed}`);
+  const gcPatterns = cleanupPatterns(db, logger);
+  if (expired > 0 || decayed > 0 || gcPatterns > 0) {
+    logger.info?.(`memory-bank maintenance: expired=${expired}, decayed=${decayed}, patternsGC=${gcPatterns}`);
   }
   return { expired, decayed };
+}
+
+/**
+ * Clean up low-confidence stale patterns.
+ * Deletes patterns with confidence < 0.1 that haven't been updated in 30+ days.
+ */
+function cleanupPatterns(db: Database, logger: Logger): number {
+  try {
+    const result = db.prepare(
+      "DELETE FROM patterns WHERE confidence < 0.1 AND updated_at < datetime('now', '-30 days')"
+    ).run();
+    const deleted = result.changes;
+    if (deleted > 0) {
+      logger.info?.(`memory-bank: GC'd ${deleted} stale patterns`);
+    }
+    return deleted;
+  } catch {
+    return 0;
+  }
 }
 
 /**

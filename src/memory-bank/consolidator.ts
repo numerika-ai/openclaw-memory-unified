@@ -7,13 +7,9 @@ import type { Database } from "better-sqlite3";
 import { embed, cosineSim, embeddingToBuffer } from "../embedding/nemotron";
 import type { ExtractedFact, ConsolidationResult, MemoryBankConfig, MemoryFact } from "./types";
 
-interface NativeLanceManager {
-  isReady(): boolean;
-  addEntry(entryId: number, text: string): Promise<boolean>;
-}
-
 interface FactEmbeddingStore {
   storeFactEmbedding(factId: number, embeddingBuf: Buffer): void;
+  searchFactsByVector?(queryEmbeddingBuf: Buffer, topK: number, scope?: string): Array<{ factId: number; distance: number; topic: string; fact: string; confidence: number }>;
 }
 
 /**
@@ -75,7 +71,7 @@ export async function consolidateFact(
   newFact: ExtractedFact,
   db: Database,
   config: MemoryBankConfig,
-  lanceManager: NativeLanceManager | null,
+  _unused: unknown,
   logger: { info?(...args: unknown[]): void; warn?(...args: unknown[]): void },
   scope?: string,
   embeddingStore?: FactEmbeddingStore | null,
@@ -97,21 +93,37 @@ export async function consolidateFact(
     return { action: "created", factId, similarity: 0 };
   }
 
-  // Find existing facts in same topic that are active
-  const existing = db.prepare(
-    "SELECT id, fact, confidence, hnsw_key FROM memory_facts WHERE topic = ? AND status = 'active' ORDER BY confidence DESC LIMIT 50"
-  ).all(newFact.topic) as Array<Pick<MemoryFact, "id" | "fact" | "confidence" | "hnsw_key">>;
-
+  // Vector-first: use pre-embedded facts in sqlite-vec instead of O(n²) per-fact embedding
   let bestSim = 0;
-  let bestMatch: (typeof existing)[0] | null = null;
+  let bestMatch: Pick<MemoryFact, "id" | "fact" | "confidence" | "hnsw_key"> | null = null;
 
-  for (const ex of existing) {
-    const exEmb = await embed(ex.fact, "passage");
-    if (!exEmb) continue;
-    const sim = cosineSim(newEmb, exEmb);
-    if (sim > bestSim) {
-      bestSim = sim;
-      bestMatch = ex;
+  if (embeddingStore?.searchFactsByVector) {
+    // Single vector query — replaces N embed calls with 1 sqlite-vec KNN search
+    const vecResults = embeddingStore.searchFactsByVector(embeddingToBuffer(newEmb), 5, scope);
+    for (const vr of vecResults) {
+      // Only consider facts in the same topic
+      if (vr.topic !== newFact.topic) continue;
+      const sim = 1 - vr.distance; // cosine distance → similarity
+      if (sim > bestSim) {
+        bestSim = sim;
+        const factRow = db.prepare("SELECT id, fact, confidence, hnsw_key FROM memory_facts WHERE id = ?").get(vr.factId) as any;
+        if (factRow) bestMatch = factRow;
+      }
+    }
+  } else {
+    // Fallback: O(n) per-fact embedding (when sqlite-vec not available)
+    const existing = db.prepare(
+      "SELECT id, fact, confidence, hnsw_key FROM memory_facts WHERE topic = ? AND status = 'active' ORDER BY confidence DESC LIMIT 50"
+    ).all(newFact.topic) as Array<Pick<MemoryFact, "id" | "fact" | "confidence" | "hnsw_key">>;
+
+    for (const ex of existing) {
+      const exEmb = await embed(ex.fact, "passage");
+      if (!exEmb) continue;
+      const sim = cosineSim(newEmb, exEmb);
+      if (sim > bestSim) {
+        bestSim = sim;
+        bestMatch = ex;
+      }
     }
   }
 
@@ -163,11 +175,6 @@ export async function consolidateFact(
   const factId = insertFact(db, newFact, scope);
   logRevision(db, factId, "created", null, newFact.fact, bestSim > 0 ? `new (best sim=${bestSim.toFixed(3)})` : "new (no similar facts)");
   storeVec(factId, newEmb);
-
-  // Embed in LanceDB (fire and forget)
-  if (lanceManager?.isReady()) {
-    lanceManager.addEntry(factId, newFact.fact).catch(() => {});
-  }
 
   logger.info?.(`memory-bank: CREATE fact #${factId} topic=${newFact.topic} conf=${newFact.confidence.toFixed(2)}`);
   return { action: "created", factId, similarity: bestSim };

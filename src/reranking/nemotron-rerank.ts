@@ -1,11 +1,11 @@
 /**
- * reranking/nemotron-rerank.ts — Nemotron Rerank 1B v2 via TEI
+ * reranking/nemotron-rerank.ts — Nemotron Rerank 1B v2
  *
  * Cross-encoder reranking for improved RAG accuracy.
  * Falls back gracefully if rerank endpoint is unavailable.
  */
 
-export const RERANK_URL = process.env.RERANK_URL ?? "http://localhost:8081/rerank";
+export const RERANK_URL = process.env.RERANK_URL ?? "http://localhost:8082/rerank";
 
 export interface RerankCandidate {
   id: number;
@@ -50,9 +50,12 @@ export async function rerankResults(
       return candidates.slice(0, topK);
     }
 
-    const data = (await resp.json()) as TeiRerankResponse[];
+    const raw = (await resp.json()) as Record<string, unknown>;
+    // Server returns {results: [{index, score}, ...]} or flat array
+    const data: TeiRerankResponse[] = Array.isArray(raw)
+      ? (raw as TeiRerankResponse[])
+      : ((raw.results ?? []) as TeiRerankResponse[]);
 
-    // TEI returns [{index, score}, ...] sorted by score desc
     const reranked: RerankCandidate[] = data
       .sort((a, b) => b.score - a.score)
       .slice(0, topK)

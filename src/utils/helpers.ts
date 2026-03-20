@@ -57,6 +57,9 @@ const STOP_WORDS = new Set([
   'your', 'just', 'also', 'more', 'would', 'could', 'should', 'each', 'make', 'like',
   'nie', 'tak', 'jest', 'ale', 'czy', 'jak', 'ten', 'tam', 'dla', 'pod', 'nad',
   'bez', 'przez', 'przy', 'przed', 'tylko', 'jeszcze', 'tego', 'jako', 'jego',
+  'może', 'mam', 'masz', 'żeby', 'albo', 'teraz', 'sobie', 'tutaj', 'jakie', 'kiedy',
+  'więc', 'coś', 'będzie', 'bardzo', 'dobra', 'dobrze', 'proszę', 'działa', 'trzeba',
+  'można', 'chcę', 'mogę', 'musisz', 'zrób', 'sprawdź',
   'system', 'utc', 'whatsapp', 'gateway', 'connected', 'please', 'thanks', 'hello',
   'agent', 'tool', 'result', 'content', 'text', 'data', 'file', 'name', 'type',
 ]);

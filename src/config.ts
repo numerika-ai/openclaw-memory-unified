@@ -2,7 +2,7 @@
  * memory-unified plugin configuration
  */
 
-const DEFAULT_DB_PATH = "/home/hermes/.openclaw/workspace/skill-memory.db";
+const DEFAULT_DB_PATH = "skill-memory.db";
 const ALLOWED_KEYS = ["dbPath", "ragSlim", "logToolCalls", "trajectoryTracking", "ragTopK", "memoryBank", "embeddingDim", "embeddingModel", "rerankUrl", "rerankEnabled"];
 
 export interface UnifiedMemoryConfig {
@@ -58,7 +58,7 @@ export const unifiedConfigSchema = {
         ragTopK: 5,
         embeddingDim: 2048,
         embeddingModel: "nvidia/llama-nemotron-embed-1b-v2",
-        rerankUrl: "http://localhost:8081/rerank",
+        rerankUrl: "http://localhost:8082/rerank",
         rerankEnabled: true,
       };
     }
@@ -103,7 +103,7 @@ export const unifiedConfigSchema = {
       ragTopK,
       embeddingDim: typeof cfg.embeddingDim === "number" ? cfg.embeddingDim : 2048,
       embeddingModel: typeof cfg.embeddingModel === "string" ? cfg.embeddingModel : "nvidia/llama-nemotron-embed-1b-v2",
-      rerankUrl: typeof cfg.rerankUrl === "string" ? cfg.rerankUrl : "http://localhost:8081/rerank",
+      rerankUrl: typeof cfg.rerankUrl === "string" ? cfg.rerankUrl : "http://localhost:8082/rerank",
       rerankEnabled: cfg.rerankEnabled !== false,
       memoryBank,
     };

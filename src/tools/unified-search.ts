@@ -1,9 +1,9 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDef, ToolResult, UnifiedDB } from "../types";
 import type { EntryType } from "../config";
-import type { NativeLanceManager } from "../db/lance-manager";
+import type { VectorManager } from "../db/lance-manager";
 
-export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: NativeLanceManager | null): ToolDef {
+export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: VectorManager | null): ToolDef {
   return {
     name: "unified_search",
     label: "Unified Memory Search",
@@ -23,7 +23,7 @@ export function createUnifiedSearchTool(udb: UnifiedDB, lanceManager: NativeLanc
       // FTS5 keyword search via SQLite
       const sqlResults = udb.ftsSearch(query, entryType, limit, agentId);
 
-      // Semantic vector search via LanceDB + Qwen3 embeddings
+      // Semantic vector search via sqlite-vec + Nemotron embeddings
       let vectorLines: string[] = [];
       let vectorCount = 0;
       if (lanceManager?.isReady()) {
