@@ -153,6 +153,19 @@ Add to `openclaw.json`:
 | `sqlite-vec` | Vector search extension (brute-force KNN, in-process) |
 | `@sinclair/typebox` | Schema validation |
 
+## Smart Tool Logging (Phase 4, 2026-03-21)
+
+**Problem:** The `after_tool_call` hook logged EVERY tool call (exec, read, write, process, web_fetch...) into `unified_entries` + generated embeddings for each. This created 18,500+ tool entries (~147 MB of text + embeddings) that were never searchable (0% HNSW coverage, 0 retrievals). The DB grew from ~15 MB to 204 MB in 3 weeks.
+
+**Fix:**
+- **Whitelist filtering** in `on-turn-end.ts`: only `sessions_spawn`, `message`, `gateway`, `cron`, `unified_store` are logged. All others silently skipped.
+- **Config option** `logToolCallsFilter` in `config.ts`: `"whitelist"` (default), `"all"`, `"none"`, or `string[]` of custom tool names.
+- **access_count tracking** in `unified-search.ts`: every search result gets `access_count += 1` and `last_accessed_at` updated (previously always 0).
+- **Startup cleanup** in `maintenance.ts`: `runDataCleanup()` deletes old tool entries, clears staging, rebuilds FTS5, runs VACUUM.
+- **Periodic maintenance** in `maintenance.ts`: `runPeriodicMaintenance()` purges tools >7d, archives stale conversations, reports stats.
+
+**Results:** DB size 204 MB → 37 MB (82% reduction). 18,496 tool entries → 3. 17,483 staging blobs → 0. FTS5 rebuilt with 792 clean entries.
+
 ## Known Issues (Fixed)
 
 ### Extraction loop triggering RAG pipeline (Phase 3, 2026-03-21)
@@ -174,4 +187,4 @@ See [UPGRADE-PLAN.md](UPGRADE-PLAN.md) for the full audit and phased improvement
 - [CUDA-SETUP.md](docs/CUDA-SETUP.md) — GPU embedding setup
 
 ---
-*Last updated: 2026-03-20*
+*Last updated: 2026-03-21*
