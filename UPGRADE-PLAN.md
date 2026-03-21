@@ -257,14 +257,22 @@ if (cfg.rerankEnabled && slimLines.length > 10) {
 | 2.5 | **Persist skill embedding cache**: SQLite table zamiast in-memory | 🟡 Medium | 30 min | `nemotron.ts`, `sqlite.ts` |
 | 2.6 | **Remove RAG fallback O(n) path**: assert + warning zamiast per-fact embed | 🟢 Low | 15 min | `rag-injection.ts` |
 
-### Faza 3: Extraction Recovery (1-2h, depends on LLM availability)
+### Faza 3: Extraction Loop Fix ✅ DONE (2026-03-21)
+
+| # | Task | Impact | Status | Pliki |
+|---|------|--------|--------|-------|
+| 3.1 | **Skip RAG for internal extraction calls**: early return w rag-injection.ts | 🔴 Critical | ✅ Done | `rag-injection.ts` |
+| 3.2 | **Cleanup phantom conversations**: archive ~131 junk threads on startup | 🟡 Medium | ✅ Done | `index.ts` |
+| 3.3 | **Document extraction loop bug**: Known Issues (Fixed) in README | 🟢 Low | ✅ Done | `README.md` |
+
+### Faza 3b: Extraction Recovery (future, depends on LLM availability)
 
 | # | Task | Impact | Effort | Pliki |
 |---|------|--------|--------|-------|
-| 3.1 | **Tymczasowy extraction via Anthropic API**: Sonnet jako extractor (kosztuje, ale działa) | 🔴 Critical | 30 min | `config.ts`, openclaw.json |
-| 3.2 | **Extraction via lokalny LLM** (gdy Nemotron Super 120B stanie): endpoint swap | 🔴 Critical | 15 min | openclaw.json |
-| 3.3 | **Extraction fallback chain**: try local LLM → try API → skip | 🟡 Medium | 1h | `extractor.ts` |
-| 3.4 | **Backfill historycznych faktów**: re-process ostatnich 100 skill_executions | 🟡 Medium | 30 min | one-shot script |
+| 3b.1 | **Tymczasowy extraction via Anthropic API**: Sonnet jako extractor (kosztuje, ale działa) | 🔴 Critical | 30 min | `config.ts`, openclaw.json |
+| 3b.2 | **Extraction via lokalny LLM** (gdy Nemotron Super 120B stanie): endpoint swap | 🔴 Critical | 15 min | openclaw.json |
+| 3b.3 | **Extraction fallback chain**: try local LLM → try API → skip | 🟡 Medium | 1h | `extractor.ts` |
+| 3b.4 | **Backfill historycznych faktów**: re-process ostatnich 100 skill_executions | 🟡 Medium | 30 min | one-shot script |
 
 ### Faza 4: Embedding Migration — Nemotron 1B → Qwen3-Embedding-8B (4-8h)
 

@@ -54,6 +54,11 @@ export function createRagInjectionHook(deps: HookDependencies) {
     const prompt = event.prompt as string | undefined;
     if (!prompt || prompt.length < 5) return;
 
+    // Skip RAG pipeline for internal Memory Bank extraction calls
+    if (prompt.startsWith("You are a memory extraction system")) {
+      return; // extraction doesn't need skill matching or vector search
+    }
+
     // Capture agent_id from event context and expose globally for tools
     const agentId = (event.agentId ?? event.agent_id ?? extractAgentFromSessionKey(event.sessionKey as string | undefined) ?? "main") as string;
     memoryState.agentId = agentId;

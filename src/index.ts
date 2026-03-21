@@ -117,6 +117,21 @@ const memoryUnifiedPlugin = {
       }
     }
 
+    // Clean up phantom conversations created by extraction loop
+    try {
+      const cleanupResult = udb.db.prepare(`
+        UPDATE conversations SET status = 'archived'
+        WHERE status = 'active'
+          AND (topic LIKE 'You are a memory extraction system%'
+               OR topic LIKE 'Extract facts:%')
+      `).run();
+      if (cleanupResult.changes > 0) {
+        api.logger.info?.(`memory-unified: archived ${cleanupResult.changes} phantom extraction conversations`);
+      }
+    } catch (cleanupErr) {
+      api.logger.warn?.("memory-unified: phantom conversation cleanup failed:", String(cleanupErr));
+    }
+
     api.logger.info?.(`memory-unified: initialized (db: ${resolvedDbPath})`);
 
     // ========================================================================

@@ -153,6 +153,16 @@ Add to `openclaw.json`:
 | `sqlite-vec` | Vector search extension (brute-force KNN, in-process) |
 | `@sinclair/typebox` | Schema validation |
 
+## Known Issues (Fixed)
+
+### Extraction loop triggering RAG pipeline (Phase 3, 2026-03-21)
+
+**Problem:** Memory Bank extraction sends a system prompt ("You are a memory extraction system...") to the gateway. The gateway treated it as a normal user message and ran the full RAG pipeline (FTS5 + vector search + rerank). FTS5 matched keywords like "memory" and "system", hitting the "session-logs" skill — causing an extra LLM call per extraction. This added 5-8 seconds latency and wasted Anthropic tokens on every user message that triggered fact extraction. It also created ~131 phantom conversation threads in the database.
+
+**Fix:**
+- Early return in `rag-injection.ts`: skip the entire RAG pipeline when the prompt starts with "You are a memory extraction system"
+- Startup cleanup in `index.ts`: archives phantom conversations created by the extraction loop (idempotent, runs on every plugin init)
+
 ## Upgrade Plan
 
 See [UPGRADE-PLAN.md](UPGRADE-PLAN.md) for the full audit and phased improvement plan.
