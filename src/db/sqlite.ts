@@ -251,6 +251,24 @@ CREATE INDEX IF NOT EXISTS idx_unified_agent ON unified_entries(agent_id);
       );
     `);
 
+    // Feedback table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT DEFAULT 'main',
+        session_key TEXT,
+        task_description TEXT NOT NULL,
+        rating INTEGER CHECK (rating BETWEEN -1 AND 1),
+        comment TEXT,
+        skill_name TEXT,
+        trajectory_id TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_feedback_agent ON feedback(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_feedback_rating ON feedback(rating);
+      CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at);
+    `);
+
     // Migrations for existing databases: add new columns
     const addColumnSafe = (table: string, col: string, def: string) => {
       try { this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch { /* already exists */ }

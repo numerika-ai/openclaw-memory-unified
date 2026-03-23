@@ -188,6 +188,11 @@ export interface DatabasePort {
   markEntryAsEmbedded(entryId: number): Promise<void>;
   getUnembeddedEntries(limit: number): Promise<any[]>;
 
+  // === Feedback ===
+  storeFeedback(params: { agentId?: string; sessionKey?: string; taskDescription: string; rating: number; comment?: string; skillName?: string; trajectoryId?: string }): Promise<number>;
+  getFeedback(opts?: { agentId?: string; rating?: number; limit?: number; skillName?: string }): Promise<Array<{ id: number; agent_id: string; task_description: string; rating: number; comment: string | null; skill_name: string | null; created_at: string }>>;
+  getFeedbackStats(agentId?: string): Promise<{ total: number; positive: number; negative: number; neutral: number; topSkills: Array<{ skill: string; avgRating: number; count: number }> }>;
+
   // === Maintenance ===
   runDataCleanup(): Promise<CleanupResult>;
   vacuum(): Promise<void>;

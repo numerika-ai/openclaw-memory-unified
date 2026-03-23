@@ -693,6 +693,117 @@ export class SqlitePort implements DatabasePort {
   }
 
   // =========================================================================
+  // Feedback
+  // =========================================================================
+
+  async storeFeedback(params: {
+    agentId?: string;
+    sessionKey?: string;
+    taskDescription: string;
+    rating: number;
+    comment?: string;
+    skillName?: string;
+    trajectoryId?: string;
+  }): Promise<number> {
+    const r = this.udb.db
+      .prepare(
+        `INSERT INTO feedback (agent_id, session_key, task_description, rating, comment, skill_name, trajectory_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        params.agentId ?? "main",
+        params.sessionKey ?? null,
+        params.taskDescription,
+        params.rating,
+        params.comment ?? null,
+        params.skillName ?? null,
+        params.trajectoryId ?? null
+      );
+    return r.lastInsertRowid as number;
+  }
+
+  async getFeedback(opts?: {
+    agentId?: string;
+    rating?: number;
+    limit?: number;
+    skillName?: string;
+  }): Promise<Array<{ id: number; agent_id: string; task_description: string; rating: number; comment: string | null; skill_name: string | null; created_at: string }>> {
+    const clauses: string[] = ["1=1"];
+    const params: any[] = [];
+
+    if (opts?.agentId) {
+      clauses.push("agent_id = ?");
+      params.push(opts.agentId);
+    }
+    if (opts?.rating != null) {
+      clauses.push("rating = ?");
+      params.push(opts.rating);
+    }
+    if (opts?.skillName) {
+      clauses.push("skill_name = ?");
+      params.push(opts.skillName);
+    }
+
+    const limit = opts?.limit ?? 20;
+    params.push(limit);
+
+    return this.udb.db
+      .prepare(
+        `SELECT id, agent_id, task_description, rating, comment, skill_name, created_at
+         FROM feedback
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(...params) as any[];
+  }
+
+  async getFeedbackStats(agentId?: string): Promise<{
+    total: number;
+    positive: number;
+    negative: number;
+    neutral: number;
+    topSkills: Array<{ skill: string; avgRating: number; count: number }>;
+  }> {
+    const agentClause = agentId ? "WHERE agent_id = ?" : "";
+    const agentParams = agentId ? [agentId] : [];
+
+    const row = this.udb.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) AS positive,
+           SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END) AS negative,
+           SUM(CASE WHEN rating = 0 THEN 1 ELSE 0 END) AS neutral
+         FROM feedback ${agentClause}`
+      )
+      .get(...agentParams) as any;
+
+    const skills = this.udb.db
+      .prepare(
+        `SELECT skill_name AS skill, AVG(rating) AS avg_rating, COUNT(*) AS count
+         FROM feedback
+         WHERE skill_name IS NOT NULL ${agentId ? "AND agent_id = ?" : ""}
+         GROUP BY skill_name
+         ORDER BY avg_rating DESC, count DESC
+         LIMIT 10`
+      )
+      .all(...agentParams) as any[];
+
+    return {
+      total: row?.total ?? 0,
+      positive: row?.positive ?? 0,
+      negative: row?.negative ?? 0,
+      neutral: row?.neutral ?? 0,
+      topSkills: skills.map((s: any) => ({
+        skill: s.skill,
+        avgRating: Number(Number(s.avg_rating).toFixed(2)),
+        count: s.count,
+      })),
+    };
+  }
+
+  // =========================================================================
   // Maintenance
   // =========================================================================
 

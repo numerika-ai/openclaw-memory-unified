@@ -142,6 +142,23 @@ export class PostgresPort implements DatabasePort {
       )
     `);
 
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS openclaw.feedback (
+        id BIGSERIAL PRIMARY KEY,
+        agent_id TEXT DEFAULT 'main',
+        session_key TEXT,
+        task_description TEXT NOT NULL,
+        rating INTEGER CHECK (rating BETWEEN -1 AND 1),
+        comment TEXT,
+        skill_name TEXT,
+        trajectory_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_feedback_agent ON openclaw.feedback(agent_id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_feedback_rating ON openclaw.feedback(rating)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_feedback_created ON openclaw.feedback(created_at)`);
+
     // pg_trgm indexes for full-text search
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS idx_agent_entries_content_trgm
@@ -806,7 +823,7 @@ export class PostgresPort implements DatabasePort {
     const result = await this.pool.query(
       `SELECT k.id, k.fact
        FROM openclaw.agent_knowledge k
-       LEFT JOIN openclaw.agent_embeddings ae ON ae.knowledge_id = k.id
+       LEFT JOIN openclaw.agent_embeddings ae ON ae.knowledge_id = k.id AND ae.embedding IS NOT NULL
        WHERE ae.id IS NULL
          AND k.status = 'active'
          AND k.expired_at IS NULL`
@@ -1246,7 +1263,7 @@ export class PostgresPort implements DatabasePort {
       const result = await this.pool.query(
         `SELECT ue.id, ue.summary, ue.content, ue.entry_type
          FROM openclaw.agent_entries ue
-         LEFT JOIN openclaw.agent_embeddings ae ON ae.entry_id = ue.id
+         LEFT JOIN openclaw.agent_embeddings ae ON ae.entry_id = ue.id AND ae.embedding IS NOT NULL
          WHERE ae.id IS NULL AND ue.entry_type != 'tool'
          ORDER BY ue.id DESC
          LIMIT $1`,
@@ -1392,6 +1409,125 @@ export class PostgresPort implements DatabasePort {
     }
 
     return stats;
+  }
+
+  // ===========================================================================
+  // Feedback
+  // ===========================================================================
+
+  async storeFeedback(params: {
+    agentId?: string;
+    sessionKey?: string;
+    taskDescription: string;
+    rating: number;
+    comment?: string;
+    skillName?: string;
+    trajectoryId?: string;
+  }): Promise<number> {
+    const result = await this.pool.query(
+      `INSERT INTO openclaw.feedback (agent_id, session_key, task_description, rating, comment, skill_name, trajectory_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        params.agentId ?? "main",
+        params.sessionKey ?? null,
+        params.taskDescription,
+        params.rating,
+        params.comment ?? null,
+        params.skillName ?? null,
+        params.trajectoryId ?? null,
+      ]
+    );
+    return Number(result.rows[0].id);
+  }
+
+  async getFeedback(opts?: {
+    agentId?: string;
+    rating?: number;
+    limit?: number;
+    skillName?: string;
+  }): Promise<Array<{ id: number; agent_id: string; task_description: string; rating: number; comment: string | null; skill_name: string | null; created_at: string }>> {
+    const clauses: string[] = ["1=1"];
+    const params: any[] = [];
+    let idx = 1;
+
+    if (opts?.agentId) {
+      clauses.push(`agent_id = $${idx++}`);
+      params.push(opts.agentId);
+    }
+    if (opts?.rating != null) {
+      clauses.push(`rating = $${idx++}`);
+      params.push(opts.rating);
+    }
+    if (opts?.skillName) {
+      clauses.push(`skill_name = $${idx++}`);
+      params.push(opts.skillName);
+    }
+
+    const limit = opts?.limit ?? 20;
+    params.push(limit);
+
+    const result = await this.pool.query(
+      `SELECT id, agent_id, task_description, rating, comment, skill_name, created_at
+       FROM openclaw.feedback
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC
+       LIMIT $${idx}`,
+      params
+    );
+    return result.rows.map((r: any) => ({
+      id: Number(r.id),
+      agent_id: r.agent_id,
+      task_description: r.task_description,
+      rating: Number(r.rating),
+      comment: r.comment,
+      skill_name: r.skill_name,
+      created_at: String(r.created_at),
+    }));
+  }
+
+  async getFeedbackStats(agentId?: string): Promise<{
+    total: number;
+    positive: number;
+    negative: number;
+    neutral: number;
+    topSkills: Array<{ skill: string; avgRating: number; count: number }>;
+  }> {
+    const agentClause = agentId ? "WHERE agent_id = $1" : "";
+    const agentParams = agentId ? [agentId] : [];
+
+    const totals = await this.pool.query(
+      `SELECT
+         COUNT(*) AS total,
+         COUNT(*) FILTER (WHERE rating = 1) AS positive,
+         COUNT(*) FILTER (WHERE rating = -1) AS negative,
+         COUNT(*) FILTER (WHERE rating = 0) AS neutral
+       FROM openclaw.feedback ${agentClause}`,
+      agentParams
+    );
+
+    const row = totals.rows[0];
+
+    const skillsR = await this.pool.query(
+      `SELECT skill_name AS skill, AVG(rating) AS avg_rating, COUNT(*) AS count
+       FROM openclaw.feedback
+       WHERE skill_name IS NOT NULL ${agentId ? "AND agent_id = $1" : ""}
+       GROUP BY skill_name
+       ORDER BY avg_rating DESC, count DESC
+       LIMIT 10`,
+      agentParams
+    );
+
+    return {
+      total: Number(row.total),
+      positive: Number(row.positive),
+      negative: Number(row.negative),
+      neutral: Number(row.neutral),
+      topSkills: skillsR.rows.map((s: any) => ({
+        skill: s.skill,
+        avgRating: Number(Number(s.avg_rating).toFixed(2)),
+        count: Number(s.count),
+      })),
+    };
   }
 
   // ===========================================================================

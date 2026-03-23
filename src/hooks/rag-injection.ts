@@ -160,6 +160,21 @@ export function createRagInjectionHook(deps: HookDependencies) {
         } catch {}
       }
 
+      // Feedback context for matched skill
+      if (memoryState.matchedSkillName) {
+        try {
+          const fbEntries = await port.getFeedback({ skillName: memoryState.matchedSkillName, limit: 5 });
+          if (fbEntries.length >= 3) {
+            const avg = fbEntries.reduce((sum, e) => sum + e.rating, 0) / fbEntries.length;
+            if (avg < 0) {
+              slimLines.push(`[feedback] Skill "${memoryState.matchedSkillName}" has negative feedback — review approach`);
+            } else if (avg > 0.5) {
+              slimLines.push(`[feedback] Skill "${memoryState.matchedSkillName}" performing well (avg ${avg.toFixed(1)})`);
+            }
+          }
+        } catch {}
+      }
+
       // Recent executions across all skills
       const recentSkills = await port.getRecentExecutions(3);
       for (const s of recentSkills) {

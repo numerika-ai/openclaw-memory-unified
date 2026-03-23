@@ -40,6 +40,7 @@ import { createUnifiedStoreTool } from "./tools/unified-store";
 import { createUnifiedConversationsTool } from "./tools/unified-conversations";
 import { createUnifiedIndexFilesTool } from "./tools/file-indexer";
 import { createMemoryBankManageTool } from "./tools/memory-bank-manage";
+import { createFeedbackTool } from "./tools/feedback";
 
 // Utils
 import { chunkText, autoTag, summarize, extractKeywords } from "./utils/helpers";
@@ -341,6 +342,7 @@ const memoryUnifiedPlugin = {
     api.registerTool(createUnifiedConversationsTool(port), { name: "unified_conversations" });
     api.registerTool(createUnifiedIndexFilesTool(port), { name: "unified_index_files" });
     api.registerTool(createMemoryBankManageTool(port), { name: "memory_bank_manage" });
+    api.registerTool(createFeedbackTool(port), { name: "feedback" });
 
     // ========================================================================
     // CLI: openclaw ingest <path>
