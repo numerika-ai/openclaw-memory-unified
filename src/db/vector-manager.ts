@@ -69,31 +69,62 @@ export class VectorManager {
     }
   }
 
-  /** Search for entries most similar to query text via sqlite-vec */
+  /** Search for entries most similar to query text via sqlite-vec, with recency + size boost */
   async search(query: string, topK = 5, excludeTypes: string[] = ['tool']): Promise<Array<{ entryId: number; distance: number }>> {
     try {
       const embedding = await qwenEmbed(query);
       if (!embedding || embedding.length !== EMBED_DIM) return [];
 
-      // Fetch extra to allow post-filtering by excluded types
-      const fetchK = excludeTypes.length > 0 ? topK + 10 : topK;
+      // Fetch extra to allow post-filtering by excluded types + re-sorting
+      const fetchK = (excludeTypes.length > 0 ? topK + 10 : topK) + 5;
       const results = this.sqliteVecStore.search(embedding, fetchK);
 
-      if (excludeTypes.length > 0) {
-        const excludeSet = new Set(excludeTypes);
-        // Enrich with entry_type from unified_entries and filter
-        const filtered: Array<{ entryId: number; distance: number }> = [];
-        for (const r of results) {
-          const entry = this.db.prepare('SELECT entry_type FROM unified_entries WHERE id = ?').get(r.entryId) as any;
-          if (entry && !excludeSet.has(entry.entry_type)) {
-            filtered.push(r);
-            if (filtered.length >= topK) break;
-          }
-        }
-        return filtered;
+      // Filter by excluded types and enrich with metadata for boosting
+      const excludeSet = new Set(excludeTypes);
+      const candidates: Array<{ entryId: number; distance: number; updatedAt: string | null; contentLen: number }> = [];
+
+      for (const r of results) {
+        const entry = this.db.prepare(
+          'SELECT entry_type, updated_at, length(content) AS content_len FROM unified_entries WHERE id = ?'
+        ).get(r.entryId) as any;
+        if (!entry) continue;
+        if (excludeSet.has(entry.entry_type)) continue;
+        candidates.push({
+          entryId: r.entryId,
+          distance: r.distance,
+          updatedAt: entry.updated_at ?? null,
+          contentLen: entry.content_len ?? 0,
+        });
       }
 
-      return results.slice(0, topK);
+      // Apply recency + size boost: finalScore = similarity*0.70 + recency*0.20 + size*0.10
+      const now = Date.now();
+      const boosted = candidates.map(c => {
+        const similarity = 1 - c.distance;
+
+        // Recency score based on age
+        let recencyScore = 0.2;
+        if (c.updatedAt) {
+          const ageMs = now - new Date(c.updatedAt).getTime();
+          const ageHours = ageMs / (1000 * 60 * 60);
+          if (ageHours < 24) recencyScore = 1.0;
+          else if (ageHours < 24 * 7) recencyScore = 0.7;
+          else if (ageHours < 24 * 30) recencyScore = 0.4;
+        }
+
+        // Size score based on content length
+        let sizeScore = 0.2;
+        if (c.contentLen > 2000) sizeScore = 1.0;
+        else if (c.contentLen > 500) sizeScore = 0.7;
+        else if (c.contentLen > 200) sizeScore = 0.4;
+
+        const finalScore = similarity * 0.70 + recencyScore * 0.20 + sizeScore * 0.10;
+        return { entryId: c.entryId, distance: 1 - finalScore };
+      });
+
+      // Re-sort by boosted score (lower distance = better)
+      boosted.sort((a, b) => a.distance - b.distance);
+      return boosted.slice(0, topK);
     } catch (err) {
       this.logger.warn?.('memory-unified: vector search failed:', String(err));
       return [];

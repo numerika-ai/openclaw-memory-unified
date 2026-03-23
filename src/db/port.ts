@@ -193,6 +193,10 @@ export interface DatabasePort {
   getFeedback(opts?: { agentId?: string; rating?: number; limit?: number; skillName?: string }): Promise<Array<{ id: number; agent_id: string; task_description: string; rating: number; comment: string | null; skill_name: string | null; created_at: string }>>;
   getFeedbackStats(agentId?: string): Promise<{ total: number; positive: number; negative: number; neutral: number; topSkills: Array<{ skill: string; avgRating: number; count: number }> }>;
 
+  // === Search Aliases ===
+  expandQuery(query: string): Promise<string>;
+  addAlias(alias: string, canonical: string, relatedTerms?: string[]): Promise<void>;
+
   // === Maintenance ===
   runDataCleanup(): Promise<CleanupResult>;
   vacuum(): Promise<void>;

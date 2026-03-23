@@ -168,6 +168,33 @@ export class PostgresPort implements DatabasePort {
       CREATE INDEX IF NOT EXISTS idx_agent_entries_summary_trgm
         ON openclaw.agent_entries USING gin (summary gin_trgm_ops)
     `);
+
+    // Search aliases for query expansion (short acronyms → full terms)
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS openclaw.search_aliases (
+        id SERIAL PRIMARY KEY,
+        alias TEXT NOT NULL UNIQUE,
+        canonical TEXT NOT NULL,
+        related_terms TEXT[] DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Seed initial aliases
+    const seedAliases: Array<{ alias: string; canonical: string; related: string[] }> = [
+      { alias: "PAI", canonical: "Personal AI", related: ["Claude Code PAI", "PAI framework", "TELOS system", "Pi AI"] },
+      { alias: "Vertex", canonical: "Google Vertex AI", related: ["Vertex Memory Bank", "Vertex Embeddings", "Google Cloud AI"] },
+      { alias: "MC", canonical: "Mission Control", related: ["Mission Control dashboard", "openclaw dashboard"] },
+      { alias: "CC", canonical: "Claude Code", related: ["Claude Code CLI", "ACP Claude Code"] },
+    ];
+    for (const s of seedAliases) {
+      await this.pool.query(
+        `INSERT INTO openclaw.search_aliases (alias, canonical, related_terms)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (alias) DO NOTHING`,
+        [s.alias, s.canonical, s.related]
+      );
+    }
   }
 
   private async addMissingColumns(): Promise<void> {
@@ -293,6 +320,49 @@ export class PostgresPort implements DatabasePort {
     return result.rows;
   }
 
+  // ===========================================================================
+  // Search Aliases — Query Expansion
+  // ===========================================================================
+
+  async expandQuery(query: string): Promise<string> {
+    try {
+      const words = query.split(/\s+/).filter(Boolean);
+      const expansions: string[] = [];
+
+      for (const word of words) {
+        const result = await this.pool.query(
+          `SELECT canonical, related_terms FROM openclaw.search_aliases
+           WHERE LOWER(alias) = LOWER($1)`,
+          [word]
+        );
+        if (result.rows.length > 0) {
+          const row = result.rows[0];
+          expansions.push(row.canonical);
+          const related: string[] = row.related_terms || [];
+          expansions.push(...related.slice(0, 2));
+        }
+      }
+
+      if (expansions.length === 0) return query;
+      return `${query} ${expansions.join(" ")}`;
+    } catch {
+      return query;
+    }
+  }
+
+  async addAlias(alias: string, canonical: string, relatedTerms?: string[]): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO openclaw.search_aliases (alias, canonical, related_terms)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (alias) DO UPDATE SET canonical = $2, related_terms = $3`,
+      [alias, canonical, relatedTerms ?? []]
+    );
+  }
+
+  // ===========================================================================
+  // Full-Text Search
+  // ===========================================================================
+
   async ftsSearch(
     query: string,
     entryType?: EntryType,
@@ -301,7 +371,10 @@ export class PostgresPort implements DatabasePort {
   ): Promise<any[]> {
     try {
       const maxResults = limit ?? 10;
-      const params: any[] = [query, maxResults];
+      // Expand query using aliases (PAI → Personal AI, etc.)
+      const expanded = await this.expandQuery(query);
+
+      const params: any[] = [expanded, maxResults];
       let idx = 3;
 
       let typeClause = "";
@@ -327,6 +400,45 @@ export class PostgresPort implements DatabasePort {
          LIMIT $2`,
         params
       );
+
+      // ILIKE fallback for short terms that trigram misses
+      if (result.rows.length === 0) {
+        const shortWords = query.split(/\s+/).filter(w => w.length >= 2 && w.length <= 5);
+        if (shortWords.length > 0) {
+          const ilikeClauses = shortWords.map((_, i) => `(content ILIKE $${i + 1} OR summary ILIKE $${i + 1} OR tags ILIKE $${i + 1})`);
+          const ilikeParams = shortWords.map(w => `%${w}%`);
+
+          let ilikeTypeClause = "";
+          let ilikeLimitIdx = shortWords.length + 1;
+          if (entryType) {
+            ilikeTypeClause = `AND entry_type = $${ilikeLimitIdx}`;
+            ilikeParams.push(entryType);
+            ilikeLimitIdx++;
+          }
+
+          let ilikeAgentClause = "";
+          if (agentId) {
+            ilikeAgentClause = `AND agent_id = $${ilikeLimitIdx}::uuid`;
+            ilikeParams.push(this.resolveAgentId(agentId));
+            ilikeLimitIdx++;
+          }
+
+          ilikeParams.push(String(maxResults));
+
+          const fallback = await this.pool.query(
+            `SELECT *, 0.1 AS rank
+             FROM openclaw.agent_entries
+             WHERE (${ilikeClauses.join(" OR ")})
+               ${ilikeTypeClause}
+               ${ilikeAgentClause}
+             ORDER BY updated_at DESC
+             LIMIT $${ilikeLimitIdx}`,
+            ilikeParams
+          );
+          return fallback.rows;
+        }
+      }
+
       return result.rows;
     } catch {
       return [];

@@ -8,6 +8,16 @@
       "placeholder": "~/.openclaw/workspace/skill-memory.db",
       "help": "Path to the unified SQLite database. Created automatically if missing."
     },
+    "backend": {
+      "label": "Database Backend",
+      "sensitive": false,
+      "help": "Database backend: sqlite (local) or postgres (remote). Default: postgres."
+    },
+    "postgresUrl": {
+      "label": "PostgreSQL Connection URL",
+      "sensitive": true,
+      "help": "PostgreSQL connection string for postgres backend."
+    },
     "ragSlim": {
       "label": "RAG Injection on Agent Start",
       "sensitive": false,
@@ -40,6 +50,8 @@
     "additionalProperties": false,
     "properties": {
       "dbPath": { "type": "string" },
+      "backend": { "type": "string", "enum": ["sqlite", "postgres"], "default": "postgres" },
+      "postgresUrl": { "type": "string" },
       "ragSlim": { "type": "boolean" },
       "logToolCalls": { "type": "boolean" },
       "logToolWhitelist": { "type": "array", "items": { "type": "string" } },

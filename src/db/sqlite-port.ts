@@ -804,6 +804,18 @@ export class SqlitePort implements DatabasePort {
   }
 
   // =========================================================================
+  // Search Aliases (no-op for SQLite — Postgres-only feature)
+  // =========================================================================
+
+  async expandQuery(query: string): Promise<string> {
+    return query;
+  }
+
+  async addAlias(_alias: string, _canonical: string, _relatedTerms?: string[]): Promise<void> {
+    // no-op for SQLite backend
+  }
+
+  // =========================================================================
   // Maintenance
   // =========================================================================
 

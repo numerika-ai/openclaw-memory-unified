@@ -88,7 +88,10 @@ export function createRagInjectionHook(deps: HookDependencies) {
                               .trim() || prompt;
         }
 
-        const keywords = (cleanPrompt.match(/[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}/g) || [])
+        // Expand query using search aliases (PAI → Personal AI, MC → Mission Control, etc.)
+        const expandedPrompt = await port.expandQuery(cleanPrompt);
+
+        const keywords = (expandedPrompt.match(/[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}/g) || [])
           .slice(0, 10)
           .join(" OR ");
 

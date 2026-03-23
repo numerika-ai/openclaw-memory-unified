@@ -20,13 +20,16 @@ export function createUnifiedSearchTool(port: DatabasePort, lanceManager: Vector
       agent_id: Type.Optional(Type.String({ description: "Filter by agent (e.g. wiki, jarvis, hermes). Omit to search all agents." })),
     }),
     async execute(_id, params): Promise<ToolResult> {
-      const query = params.query as string;
+      const rawQuery = params.query as string;
       const entryType = params.type as EntryType | undefined;
       const limit = (params.limit as number) ?? 10;
       const agentId = params.agent_id as string | undefined;
 
-      // FTS5 keyword search
-      const sqlResults = await port.ftsSearch(query, entryType, limit, agentId);
+      // Expand query using search aliases (short acronyms → full terms)
+      const query = await port.expandQuery(rawQuery);
+
+      // FTS5 keyword search (ftsSearch also expands internally, but we pass expanded for vector)
+      const sqlResults = await port.ftsSearch(rawQuery, entryType, limit, agentId);
 
       // Semantic vector search
       let vectorLines: string[] = [];
