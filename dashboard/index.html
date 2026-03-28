@@ -3,94 +3,228 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Memory Graph — OpenClaw Knowledge Dashboard</title>
+    <title>🧠 Memory Graph — Live Dashboard</title>
     <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
     <script src="https://unpkg.com/vis-timeline@7.7.3/standalone/umd/vis-timeline-graph2d.min.js"></script>
     <link href="https://unpkg.com/vis-timeline@7.7.3/styles/vis-timeline-graph2d.min.css" rel="stylesheet">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: #1a1a2e;
-            color: #e0e0e0;
-            overflow: hidden;
-            height: 100vh;
+        :root {
+            --bg: #0f0f23;
+            --sidebar: #1a1a2e;
+            --card: #16213e;
+            --accent: #00d4ff;
+            --accent-dim: #00d4ff33;
+            --border: #1e2d4a;
+            --text: #e0e6f0;
+            --text-dim: #6b7fa3;
+            --text-muted: #3d4f6f;
+            --danger: #ff4757;
+            --success: #2ed573;
+            --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
         }
 
-        /* --- Header / Stats Bar --- */
+        body {
+            font-family: var(--font-ui);
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== HEADER / STATS BAR ===== */
         .header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 16px;
-            background: #16213e;
-            border-bottom: 1px solid #0f3460;
-            height: 48px;
+            padding: 0 20px;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            height: 52px;
+            flex-shrink: 0;
+            gap: 16px;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
             flex-shrink: 0;
         }
         .header h1 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #e94560;
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--accent);
             white-space: nowrap;
+            letter-spacing: -0.3px;
         }
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: background 0.3s;
+            flex-shrink: 0;
+        }
+        .connection-dot.online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+        .connection-dot.offline { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+
         .stats-bar {
             display: flex;
-            gap: 16px;
+            align-items: center;
+            gap: 20px;
             font-size: 12px;
+            overflow-x: auto;
+            flex: 1;
+            justify-content: center;
         }
         .stat {
             display: flex;
             align-items: center;
-            gap: 4px;
+            gap: 5px;
+            white-space: nowrap;
         }
+        .stat-icon { font-size: 13px; }
         .stat-value {
-            font-weight: 700;
-            color: #e94560;
-            font-size: 14px;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            color: var(--accent);
+            font-size: 13px;
         }
-        .stat-label { color: #8899aa; }
+        .stat-label { color: var(--text-dim); font-size: 11px; }
 
-        /* --- Tabs --- */
-        .tabs {
+        .header-right {
             display: flex;
-            background: #16213e;
-            border-bottom: 1px solid #0f3460;
-            height: 36px;
+            align-items: center;
+            gap: 10px;
             flex-shrink: 0;
         }
-        .tab {
-            padding: 8px 24px;
+        .type-badges {
+            display: flex;
+            gap: 4px;
+        }
+        .type-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-family: var(--font-mono);
+            font-weight: 500;
+            opacity: 0.85;
+        }
+        .tier-dots {
+            display: flex;
+            gap: 3px;
+            align-items: center;
+        }
+        .tier-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+        .tier-dot.hot { background: #ff6b35; }
+        .tier-dot.warm { background: #ffd93d; }
+        .tier-dot.cold { background: #74b9ff; }
+        .tier-label { font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); }
+
+        .refresh-info {
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            white-space: nowrap;
+        }
+        .btn-icon {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 13px;
-            color: #8899aa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: all 0.15s;
+        }
+        .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-icon.spinning { animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== TABS ===== */
+        .tabs {
+            display: flex;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            height: 38px;
+            flex-shrink: 0;
+            padding: 0 20px;
+            gap: 4px;
+        }
+        .tab {
+            padding: 0 20px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-dim);
             border-bottom: 2px solid transparent;
             transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            user-select: none;
         }
-        .tab:hover { color: #e0e0e0; }
-        .tab.active {
-            color: #e94560;
-            border-bottom-color: #e94560;
+        .tab:hover { color: var(--text); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-key {
+            font-size: 9px;
+            font-family: var(--font-mono);
+            padding: 1px 4px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-muted);
+        }
+        .tab-count {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            background: var(--accent-dim);
+            color: var(--accent);
+            padding: 1px 5px;
+            border-radius: 8px;
         }
 
-        /* --- Main Layout --- */
+        /* ===== MAIN LAYOUT ===== */
         .main {
-            display: flex;
-            height: calc(100vh - 84px);
-        }
-        .graph-container {
             flex: 1;
             position: relative;
+            overflow: hidden;
         }
-        #network, #timeline-container {
-            width: 100%;
-            height: 100%;
+        .tab-content {
+            display: none;
+            position: absolute;
+            inset: 0;
         }
-        .tab-content { display: none; height: 100%; }
         .tab-content.active { display: flex; }
 
-        /* --- Search --- */
+        /* ===== KNOWLEDGE GRAPH ===== */
+        .graph-wrapper {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        #network {
+            width: 100%;
+            height: 100%;
+            background: var(--bg);
+        }
+
         .search-box {
             position: absolute;
             top: 12px;
@@ -98,210 +232,466 @@
             z-index: 10;
         }
         .search-box input {
-            background: #16213e;
-            border: 1px solid #0f3460;
-            color: #e0e0e0;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            width: 240px;
-            outline: none;
-        }
-        .search-box input:focus {
-            border-color: #e94560;
-        }
-        .search-box input::placeholder { color: #556677; }
-
-        /* --- Detail Panel --- */
-        .detail-panel {
-            width: 320px;
-            background: #16213e;
-            border-left: 1px solid #0f3460;
-            overflow-y: auto;
-            padding: 16px;
-            display: none;
-            flex-shrink: 0;
-        }
-        .detail-panel.visible { display: block; }
-        .detail-panel h2 {
-            font-size: 16px;
-            color: #e94560;
-            margin-bottom: 12px;
-        }
-        .detail-panel .close-btn {
-            float: right;
-            cursor: pointer;
-            color: #8899aa;
-            font-size: 18px;
-        }
-        .detail-panel .close-btn:hover { color: #e94560; }
-        .detail-section {
-            margin-bottom: 16px;
-        }
-        .detail-section h3 {
-            font-size: 12px;
-            text-transform: uppercase;
-            color: #8899aa;
-            margin-bottom: 6px;
-            letter-spacing: 0.5px;
-        }
-        .detail-section .value {
-            font-size: 13px;
-            line-height: 1.5;
-        }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-            margin: 2px;
-        }
-        .badge-person { background: #4CAF50; color: #fff; }
-        .badge-organization { background: #2196F3; color: #fff; }
-        .badge-project { background: #FF9800; color: #fff; }
-        .badge-tool { background: #9C27B0; color: #fff; }
-        .badge-infrastructure { background: #607D8B; color: #fff; }
-        .badge-concept { background: #795548; color: #fff; }
-
-        .relation-item {
-            padding: 6px 0;
-            border-bottom: 1px solid #0f3460;
-            font-size: 12px;
-        }
-        .relation-item:last-child { border-bottom: none; }
-        .relation-arrow { color: #e94560; }
-        .fact-item {
-            padding: 8px;
-            background: #1a1a2e;
-            border-radius: 6px;
-            margin-bottom: 6px;
-            font-size: 12px;
-            line-height: 1.4;
-        }
-        .fact-topic {
-            color: #e94560;
-            font-weight: 600;
-            font-size: 11px;
-        }
-        .fact-confidence {
-            color: #8899aa;
-            font-size: 10px;
-        }
-
-        /* --- Facts Tab --- */
-        .facts-table {
-            width: 100%;
-            overflow-y: auto;
-            padding: 16px;
-        }
-        .facts-grid {
-            display: grid;
-            gap: 8px;
-        }
-        .fact-card {
-            background: #16213e;
-            border: 1px solid #0f3460;
+            background: var(--card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 12px 8px 32px;
             border-radius: 8px;
-            padding: 12px;
+            font-size: 13px;
+            font-family: var(--font-ui);
+            width: 260px;
+            outline: none;
+            transition: border-color 0.2s;
         }
-        .fact-card-header {
+        .search-box input:focus { border-color: var(--accent); }
+        .search-box input::placeholder { color: var(--text-muted); }
+        .search-icon {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 13px;
+            pointer-events: none;
+        }
+
+        .graph-controls {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 10;
             display: flex;
-            justify-content: space-between;
-            margin-bottom: 6px;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .graph-controls .btn-icon {
+            background: var(--card);
+            width: 34px;
+            height: 34px;
         }
 
-        /* --- Timeline --- */
-        .vis-timeline {
-            background: #1a1a2e !important;
-            border: none !important;
-        }
-        .vis-item {
-            background: #16213e !important;
-            border-color: #0f3460 !important;
-            color: #e0e0e0 !important;
-            font-size: 11px !important;
-            border-radius: 4px !important;
-        }
-        .vis-item.vis-selected {
-            border-color: #e94560 !important;
-        }
-        .vis-time-axis .vis-text {
-            color: #8899aa !important;
-            font-size: 11px !important;
-        }
-        .vis-panel.vis-bottom, .vis-panel.vis-center,
-        .vis-panel.vis-top, .vis-panel.vis-left, .vis-panel.vis-right {
-            border-color: #0f3460 !important;
-        }
-
-        /* --- Legend --- */
         .legend {
             position: absolute;
             bottom: 12px;
             left: 12px;
-            background: #16213ecc;
-            padding: 8px 12px;
-            border-radius: 6px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            padding: 8px 14px;
+            border-radius: 8px;
             display: flex;
-            gap: 12px;
+            gap: 14px;
             font-size: 11px;
             z-index: 10;
         }
         .legend-item {
             display: flex;
             align-items: center;
-            gap: 4px;
+            gap: 5px;
+            color: var(--text-dim);
         }
         .legend-dot {
             width: 10px;
             height: 10px;
             border-radius: 50%;
+            flex-shrink: 0;
         }
 
-        /* --- Refresh indicator --- */
-        .refresh-indicator {
+        /* ===== DETAIL PANEL ===== */
+        .detail-panel {
+            width: 360px;
+            background: var(--sidebar);
+            border-left: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 20px;
+            flex-shrink: 0;
+            transform: translateX(100%);
+            transition: transform 0.25s ease;
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            z-index: 15;
+        }
+        .detail-panel.visible { transform: translateX(0); }
+        .detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+        .detail-header h2 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1.3;
+        }
+        .close-btn {
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 20px;
+            line-height: 1;
+            padding: 4px;
+            transition: color 0.15s;
+        }
+        .close-btn:hover { color: var(--accent); }
+        .detail-section { margin-bottom: 18px; }
+        .detail-section h3 {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+        .detail-value {
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-dim);
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
             font-size: 11px;
-            color: #556677;
+            font-weight: 600;
+        }
+        .badge-person { background: #4CAF5022; color: #4CAF50; border: 1px solid #4CAF5044; }
+        .badge-organization { background: #2196F322; color: #2196F3; border: 1px solid #2196F344; }
+        .badge-project { background: #FF980022; color: #FF9800; border: 1px solid #FF980044; }
+        .badge-tool { background: #9C27B022; color: #9C27B0; border: 1px solid #9C27B044; }
+        .badge-infrastructure { background: #607D8B22; color: #607D8B; border: 1px solid #607D8B44; }
+        .badge-concept { background: #79554822; color: #795548; border: 1px solid #79554844; }
+        .relation-item {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .relation-item:last-child { border-bottom: none; }
+        .relation-arrow { color: var(--accent); font-weight: 700; font-size: 14px; }
+        .relation-type { color: var(--text-dim); font-family: var(--font-mono); font-size: 11px; }
+        .fact-card-mini {
+            padding: 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .fact-card-mini .topic {
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+        .fact-card-mini .meta {
+            color: var(--text-muted);
+            font-size: 10px;
+            font-family: var(--font-mono);
+            margin-top: 4px;
         }
 
-        /* --- Responsive --- */
+        /* ===== FACTS TAB ===== */
+        .facts-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .facts-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .filter-group {
+            display: flex;
+            gap: 4px;
+        }
+        .filter-btn {
+            padding: 5px 12px;
+            border: 1px solid var(--border);
+            background: none;
+            color: var(--text-dim);
+            font-size: 11px;
+            font-family: var(--font-ui);
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .filter-btn:hover { border-color: var(--accent); color: var(--text); }
+        .filter-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+        .filter-select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: var(--font-ui);
+            outline: none;
+            cursor: pointer;
+        }
+        .filter-select:focus { border-color: var(--accent); }
+
+        .facts-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+        }
+        .facts-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .facts-table th {
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+            text-align: left;
+            padding: 8px 12px;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .facts-table th:hover { color: var(--accent); }
+        .facts-table th .sort-arrow { font-size: 9px; margin-left: 3px; }
+        .facts-table td {
+            padding: 10px 12px;
+            font-size: 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+        .facts-table tr { transition: background 0.1s; }
+        .facts-table tbody tr:hover { background: var(--card); }
+        .facts-table tbody tr.expanded { background: var(--accent-dim); }
+        .fact-text {
+            max-width: 400px;
+            cursor: pointer;
+            line-height: 1.4;
+        }
+        .fact-text.truncated {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .confidence-bar {
+            width: 60px;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-flex;
+            vertical-align: middle;
+        }
+        .confidence-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        .conf-high { background: var(--success); }
+        .conf-mid { background: #ffd93d; }
+        .conf-low { background: var(--danger); }
+        .tier-badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .tier-hot { background: #ff6b3522; color: #ff6b35; }
+        .tier-warm { background: #ffd93d22; color: #ffd93d; }
+        .tier-cold { background: #74b9ff22; color: #74b9ff; }
+        .access-count {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-dim);
+        }
+        .last-accessed {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        /* ===== TIMELINE TAB ===== */
+        .timeline-wrapper {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        #timeline-container {
+            width: 100%;
+            height: 100%;
+        }
+        .vis-timeline { background: var(--bg) !important; border: none !important; }
+        .vis-item {
+            border-radius: 4px !important;
+            font-size: 11px !important;
+            font-family: var(--font-ui) !important;
+        }
+        .vis-item.vis-selected { border-color: var(--accent) !important; }
+        .vis-item.event-topic_timeline {
+            background: #2196F322 !important;
+            border-color: #2196F3 !important;
+            color: var(--text) !important;
+        }
+        .vis-item.event-memory_bank {
+            background: #4CAF5022 !important;
+            border-color: #4CAF50 !important;
+            color: var(--text) !important;
+        }
+        .vis-item.event-entity_graph {
+            background: #FF980022 !important;
+            border-color: #FF9800 !important;
+            color: var(--text) !important;
+        }
+        .vis-item.event-conversation, .vis-item.event-fact, .vis-item.event-entity {
+            background: #9C27B022 !important;
+            border-color: #9C27B0 !important;
+            color: var(--text) !important;
+        }
+        .vis-time-axis .vis-text { color: var(--text-muted) !important; font-size: 11px !important; }
+        .vis-panel.vis-bottom, .vis-panel.vis-center,
+        .vis-panel.vis-top, .vis-panel.vis-left, .vis-panel.vis-right {
+            border-color: var(--border) !important;
+        }
+        .vis-labelset .vis-label {
+            background: var(--card) !important;
+            color: var(--text-dim) !important;
+            font-size: 11px !important;
+            border-bottom: 1px solid var(--border) !important;
+        }
+        .vis-foreground .vis-group { border-bottom: 1px solid var(--border) !important; }
+        .vis-current-time { background-color: var(--accent) !important; }
+
+        .timeline-detail {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 20px;
+            max-width: 600px;
+            width: 90%;
+            font-size: 12px;
+            line-height: 1.5;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .timeline-detail.visible { display: block; }
+        .timeline-detail .td-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .timeline-detail .td-topic { color: var(--accent); font-weight: 600; }
+        .timeline-detail .td-time { color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; }
+        .timeline-detail .td-content { color: var(--text-dim); }
+
+        /* ===== LOADING SKELETON ===== */
+        .skeleton {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg);
+            z-index: 20;
+            transition: opacity 0.3s;
+        }
+        .skeleton.hidden { opacity: 0; pointer-events: none; }
+        .skeleton-pulse {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        /* ===== SCROLLBAR ===== */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* ===== RESPONSIVE ===== */
         @media (max-width: 768px) {
             .stats-bar { display: none; }
-            .detail-panel { width: 100%; position: absolute; right: 0; top: 0; height: 100%; z-index: 20; }
+            .type-badges, .tier-dots { display: none; }
+            .detail-panel { width: 100%; }
             .search-box input { width: 180px; }
-            .legend { flex-wrap: wrap; gap: 6px; }
+            .legend { flex-wrap: wrap; gap: 8px; font-size: 10px; }
+            .tabs { overflow-x: auto; }
+            .facts-toolbar { flex-wrap: wrap; }
         }
     </style>
 </head>
 <body>
 
+<!-- ===== HEADER ===== -->
 <div class="header">
-    <h1>Memory Graph</h1>
+    <div class="header-left">
+        <div class="connection-dot" id="conn-dot" title="API status"></div>
+        <h1>🧠 Memory Graph — Live Dashboard</h1>
+    </div>
     <div class="stats-bar" id="stats-bar">
-        <div class="stat"><span class="stat-value" id="st-entities">—</span><span class="stat-label">entities</span></div>
-        <div class="stat"><span class="stat-value" id="st-relations">—</span><span class="stat-label">relations</span></div>
-        <div class="stat"><span class="stat-value" id="st-facts">—</span><span class="stat-label">facts</span></div>
-        <div class="stat"><span class="stat-value" id="st-entries">—</span><span class="stat-label">entries</span></div>
-        <div class="stat"><span class="stat-value" id="st-patterns">—</span><span class="stat-label">patterns</span></div>
-        <span class="refresh-indicator" id="refresh-time"></span>
+        <div class="stat"><span class="stat-icon">🧠</span><span class="stat-value" id="st-entities">–</span><span class="stat-label">Entities</span></div>
+        <div class="stat"><span class="stat-icon">🔗</span><span class="stat-value" id="st-relations">–</span><span class="stat-label">Relations</span></div>
+        <div class="stat"><span class="stat-icon">📝</span><span class="stat-value" id="st-facts">–</span><span class="stat-label">Facts</span></div>
+        <div class="stat"><span class="stat-icon">📊</span><span class="stat-value" id="st-entries">–</span><span class="stat-label">Entries</span></div>
+        <div class="stat"><span class="stat-icon">🔄</span><span class="stat-value" id="st-patterns">–</span><span class="stat-label">Patterns</span></div>
+        <div class="stat"><span class="stat-icon">💬</span><span class="stat-value" id="st-convos">–</span><span class="stat-label">Conversations</span></div>
+    </div>
+    <div class="header-right">
+        <div class="type-badges" id="type-badges"></div>
+        <div class="tier-dots" id="tier-dots"></div>
+        <span class="refresh-info" id="refresh-time">–</span>
+        <button class="btn-icon" id="btn-refresh" title="Refresh (R)">↻</button>
     </div>
 </div>
 
+<!-- ===== TABS ===== -->
 <div class="tabs">
-    <div class="tab active" data-tab="graph">Knowledge Graph</div>
-    <div class="tab" data-tab="timeline">Timeline</div>
+    <div class="tab active" data-tab="graph">Knowledge Graph <span class="tab-count" id="graph-count">–</span> <span class="tab-key">1</span></div>
+    <div class="tab" data-tab="facts">Facts <span class="tab-count" id="facts-count">–</span> <span class="tab-key">2</span></div>
+    <div class="tab" data-tab="timeline">Timeline <span class="tab-count" id="timeline-count">–</span> <span class="tab-key">3</span></div>
 </div>
 
+<!-- ===== MAIN ===== -->
 <div class="main">
+
     <!-- Knowledge Graph Tab -->
     <div class="tab-content active" id="tab-graph">
-        <div class="graph-container">
+        <div class="graph-wrapper">
             <div class="search-box">
-                <input type="text" id="search" placeholder="Search entities...">
+                <span class="search-icon">⌕</span>
+                <input type="text" id="search" placeholder="Search entities... (/)">
+            </div>
+            <div class="graph-controls">
+                <button class="btn-icon" id="btn-fit" title="Fit graph (F)">⊞</button>
+                <button class="btn-icon" id="btn-zoom-in" title="Zoom in">+</button>
+                <button class="btn-icon" id="btn-zoom-out" title="Zoom out">−</button>
+                <button class="btn-icon" id="btn-export" title="Export PNG">⤓</button>
             </div>
             <div id="network"></div>
-            <div class="legend">
+            <div class="legend" id="legend">
                 <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div>Person</div>
                 <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>Organization</div>
                 <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>Project</div>
@@ -309,123 +699,263 @@
                 <div class="legend-item"><div class="legend-dot" style="background:#607D8B"></div>Infrastructure</div>
                 <div class="legend-item"><div class="legend-dot" style="background:#795548"></div>Concept</div>
             </div>
+            <div class="skeleton" id="graph-skeleton"><div class="skeleton-pulse"></div></div>
         </div>
         <div class="detail-panel" id="detail-panel">
-            <span class="close-btn" id="close-detail">&times;</span>
+            <div class="detail-header">
+                <h2 id="detail-title"></h2>
+                <span class="close-btn" id="close-detail">✕</span>
+            </div>
             <div id="detail-content"></div>
+        </div>
+    </div>
+
+    <!-- Facts Tab -->
+    <div class="tab-content" id="tab-facts">
+        <div class="facts-container">
+            <div class="facts-toolbar">
+                <div class="filter-group" id="tier-filters">
+                    <button class="filter-btn active" data-tier="all">All</button>
+                    <button class="filter-btn" data-tier="hot">🔥 Hot</button>
+                    <button class="filter-btn" data-tier="warm">🟡 Warm</button>
+                    <button class="filter-btn" data-tier="cold">❄️ Cold</button>
+                </div>
+                <select class="filter-select" id="topic-filter">
+                    <option value="">All Topics</option>
+                </select>
+            </div>
+            <div class="facts-scroll">
+                <table class="facts-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="topic">Topic <span class="sort-arrow"></span></th>
+                            <th data-sort="fact">Fact <span class="sort-arrow"></span></th>
+                            <th data-sort="confidence">Confidence <span class="sort-arrow"></span></th>
+                            <th data-sort="tier">Tier <span class="sort-arrow"></span></th>
+                            <th data-sort="strength">Strength <span class="sort-arrow"></span></th>
+                            <th data-sort="access_count">Accessed <span class="sort-arrow"></span></th>
+                            <th data-sort="last_accessed_at">Last Seen <span class="sort-arrow"></span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="facts-body"></tbody>
+                </table>
+            </div>
+            <div class="skeleton" id="facts-skeleton"><div class="skeleton-pulse"></div></div>
         </div>
     </div>
 
     <!-- Timeline Tab -->
     <div class="tab-content" id="tab-timeline">
-        <div id="timeline-container"></div>
+        <div class="timeline-wrapper">
+            <div id="timeline-container"></div>
+            <div class="timeline-detail" id="timeline-detail">
+                <div class="td-header">
+                    <span class="td-topic" id="td-topic"></span>
+                    <span class="td-time" id="td-time"></span>
+                </div>
+                <div class="td-content" id="td-content"></div>
+            </div>
+            <div class="skeleton" id="timeline-skeleton"><div class="skeleton-pulse"></div></div>
+        </div>
     </div>
 </div>
 
 <script>
-const API_BASE = window.location.hostname === '' || window.location.protocol === 'file:'
-    ? 'http://localhost:8091'
-    : `${window.location.protocol}//${window.location.hostname}:8091`;
-const REFRESH_INTERVAL = 30000;
+// ===== CONFIG =====
+const API_BASE = (() => {
+    const loc = window.location;
+    if (loc.protocol === 'file:' || loc.hostname === '') return 'http://localhost:8091';
+    return `${loc.protocol}//${loc.hostname}:8091`;
+})();
+const REFRESH_MS = 30000;
 const TYPE_COLORS = {
-    person: '#4CAF50',
-    organization: '#2196F3',
-    project: '#FF9800',
-    tool: '#9C27B0',
-    infrastructure: '#607D8B',
-    concept: '#795548'
+    person: '#4CAF50', organization: '#2196F3', project: '#FF9800',
+    tool: '#9C27B0', infrastructure: '#607D8B', concept: '#795548'
 };
 
-let network = null;
-let timeline = null;
-let nodesDataset = null;
-let edgesDataset = null;
-let allNodes = [];
+// ===== STATE =====
+let network = null, timeline = null;
+let nodesDS = null, edgesDS = null;
+let allNodes = [], allFacts = [], allTimelineEvents = [];
+let factSort = { key: 'confidence', dir: -1 };
+let factTierFilter = 'all', factTopicFilter = '';
+let apiOnline = false;
 
-// --- Tabs ---
-document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
-        if (tab.dataset.tab === 'timeline' && !timeline) loadTimeline();
-    });
-});
+// ===== TABS =====
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${name}`));
+    if (name === 'facts' && allFacts.length === 0) loadFacts();
+    if (name === 'timeline' && !timeline) loadTimeline();
+}
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
-// --- Graph ---
+// ===== API HELPERS =====
+async function apiFetch(path) {
+    const resp = await fetch(`${API_BASE}${path}`);
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    return resp.json();
+}
+
+async function checkConnection() {
+    const dot = document.getElementById('conn-dot');
+    try {
+        await apiFetch('/api/stats');
+        apiOnline = true;
+        dot.className = 'connection-dot online';
+        dot.title = 'API connected';
+    } catch {
+        apiOnline = false;
+        dot.className = 'connection-dot offline';
+        dot.title = 'API offline';
+    }
+}
+
+// ===== STATS =====
+async function loadStats() {
+    try {
+        const s = await apiFetch('/api/stats');
+        document.getElementById('st-entities').textContent = s.entities ?? 0;
+        document.getElementById('st-relations').textContent = s.relations ?? 0;
+        document.getElementById('st-facts').textContent = s.facts_active ?? s.facts ?? 0;
+        document.getElementById('st-entries').textContent = s.entries ?? 0;
+        document.getElementById('st-patterns').textContent = s.patterns ?? 0;
+        document.getElementById('st-convos').textContent = s.conversations ?? 0;
+        document.getElementById('refresh-time').textContent = new Date().toLocaleTimeString();
+
+        // Type badges
+        const tb = document.getElementById('type-badges');
+        tb.innerHTML = '';
+        if (s.entity_types) {
+            Object.entries(s.entity_types).forEach(([type, count]) => {
+                const color = TYPE_COLORS[type] || '#888';
+                const el = document.createElement('span');
+                el.className = 'type-badge';
+                el.style.background = color + '22';
+                el.style.color = color;
+                el.style.border = `1px solid ${color}44`;
+                el.textContent = `${type} ${count}`;
+                tb.appendChild(el);
+            });
+        }
+
+        // Tier dots
+        const td = document.getElementById('tier-dots');
+        td.innerHTML = '';
+        if (s.tiers) {
+            ['hot', 'warm', 'cold'].forEach(tier => {
+                if (s.tiers[tier]) {
+                    const dot = document.createElement('span');
+                    dot.className = `tier-dot ${tier}`;
+                    dot.title = `${tier}: ${s.tiers[tier]}`;
+                    td.appendChild(dot);
+                    const lbl = document.createElement('span');
+                    lbl.className = 'tier-label';
+                    lbl.textContent = s.tiers[tier];
+                    td.appendChild(lbl);
+                }
+            });
+        }
+
+        apiOnline = true;
+        document.getElementById('conn-dot').className = 'connection-dot online';
+    } catch {
+        apiOnline = false;
+        document.getElementById('conn-dot').className = 'connection-dot offline';
+    }
+}
+
+// ===== KNOWLEDGE GRAPH =====
 function initNetwork() {
     const container = document.getElementById('network');
-    nodesDataset = new vis.DataSet([]);
-    edgesDataset = new vis.DataSet([]);
+    nodesDS = new vis.DataSet([]);
+    edgesDS = new vis.DataSet([]);
 
     const options = {
         nodes: {
             shape: 'dot',
-            font: { color: '#e0e0e0', size: 12, face: 'Segoe UI' },
+            font: { color: '#e0e6f0', size: 12, face: 'Inter, system-ui, sans-serif' },
             borderWidth: 2,
-            shadow: { enabled: true, color: 'rgba(0,0,0,0.3)', size: 8 }
+            shadow: { enabled: true, color: 'rgba(0,0,0,0.3)', size: 8, x: 0, y: 2 }
         },
         edges: {
-            color: { color: '#334455', highlight: '#e94560', hover: '#556677' },
-            font: { color: '#8899aa', size: 9, face: 'Segoe UI', strokeWidth: 0 },
+            color: { color: '#1e2d4a', highlight: '#00d4ff', hover: '#3d4f6f' },
+            font: { color: '#6b7fa3', size: 9, face: 'Inter', strokeWidth: 0, background: 'transparent' },
             smooth: { type: 'continuous', roundness: 0.3 },
-            width: 1.5
+            width: 1.5,
+            hoverWidth: 0.5
         },
         physics: {
             solver: 'barnesHut',
             barnesHut: {
-                gravitationalConstant: -3000,
-                centralGravity: 0.2,
-                springLength: 150,
+                gravitationalConstant: -3500,
+                centralGravity: 0.25,
+                springLength: 160,
                 springConstant: 0.04,
-                damping: 0.15
+                damping: 0.12,
+                avoidOverlap: 0.3
             },
-            stabilization: { iterations: 100, fit: true }
+            stabilization: { iterations: 120, fit: true }
         },
         interaction: {
             hover: true,
-            tooltipDelay: 200,
+            tooltipDelay: 150,
             navigationButtons: false,
-            keyboard: false
+            keyboard: false,
+            multiselect: false
         },
         groups: Object.fromEntries(
-            Object.entries(TYPE_COLORS).map(([k, v]) => [k, { color: { background: v, border: v, highlight: { background: v, border: '#e94560' } } }])
+            Object.entries(TYPE_COLORS).map(([k, v]) => [k, {
+                color: { background: v, border: v, highlight: { background: v, border: '#00d4ff' }, hover: { background: v, border: '#ffffff44' } }
+            }])
         )
     };
 
-    network = new vis.Network(container, { nodes: nodesDataset, edges: edgesDataset }, options);
+    network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, options);
     network.on('click', onNodeClick);
+    network.on('stabilizationIterationsDone', () => {
+        document.getElementById('graph-skeleton').classList.add('hidden');
+    });
 }
 
 async function loadGraph() {
     try {
-        const resp = await fetch(`${API_BASE}/api/graph`);
-        const data = await resp.json();
-        allNodes = data.nodes;
+        const data = await apiFetch('/api/graph');
+        allNodes = data.nodes || [];
 
-        const nodes = data.nodes.map(n => ({
+        const nodes = allNodes.map(n => ({
             id: n.id,
             label: n.label,
             group: n.group || n.type,
-            size: n.size,
-            title: `${n.label} (${n.type})\n${n.mentions} mentions`
+            size: Math.max(8, Math.min(40, n.size || 10)),
+            title: `${n.label} (${n.type})\n${n.mentions ?? 0} mentions`
         }));
 
-        const edges = data.edges.map(e => ({
-            id: e.id,
-            from: e.from,
-            to: e.to,
-            label: e.label,
-            title: `${e.label} (${(e.confidence * 100).toFixed(0)}%)`
-        }));
+        const edges = (data.edges || []).map((e, i) => {
+            const conf = e.confidence ?? 0.5;
+            const opacity = Math.round(40 + conf * 60).toString(16).padStart(2, '0');
+            return {
+                id: e.id ?? i,
+                from: e.from,
+                to: e.to,
+                label: e.label,
+                title: `${e.label} (${(conf * 100).toFixed(0)}%)`,
+                arrows: e.arrows || 'to',
+                color: { color: `#6b7fa3${opacity}`, highlight: '#00d4ff', hover: '#6b7fa3' },
+                width: 1 + conf * 2
+            };
+        });
 
-        nodesDataset.clear();
-        edgesDataset.clear();
-        nodesDataset.add(nodes);
-        edgesDataset.add(edges);
+        nodesDS.clear();
+        edgesDS.clear();
+        nodesDS.add(nodes);
+        edgesDS.add(edges);
+
+        document.getElementById('graph-count').textContent = `${nodes.length}n · ${edges.length}e`;
+        document.getElementById('graph-skeleton').classList.add('hidden');
     } catch (e) {
-        console.error('Failed to load graph:', e);
+        console.error('Graph load failed:', e);
+        document.getElementById('graph-skeleton').classList.add('hidden');
     }
 }
 
@@ -436,59 +966,73 @@ async function onNodeClick(params) {
     }
     const nodeId = params.nodes[0];
     try {
-        const resp = await fetch(`${API_BASE}/api/entity/${nodeId}`);
-        const entity = await resp.json();
-        showDetail(entity);
+        const data = await apiFetch(`/api/entity/${nodeId}`);
+        showDetail(data);
     } catch (e) {
-        console.error('Failed to load entity:', e);
+        console.error('Entity load failed:', e);
     }
 }
 
-function showDetail(entity) {
+function showDetail(data) {
+    const entity = data.entity || data;
+    const relations = data.relations || entity.relations || [];
+    const mentions = data.mentions || entity.mentions || [];
+    const linkedFacts = entity.linked_facts || data.linked_facts || [];
+
     const panel = document.getElementById('detail-panel');
+    const title = document.getElementById('detail-title');
     const content = document.getElementById('detail-content');
-    const typeClass = `badge-${entity.entity_type || 'concept'}`;
+    const typeName = entity.type || entity.entity_type || 'concept';
+    const badgeClass = `badge-${typeName}`;
+
+    title.textContent = entity.name || entity.label;
 
     let html = `
-        <h2>${entity.name}</h2>
         <div class="detail-section">
             <h3>Type</h3>
-            <span class="badge ${typeClass}">${entity.entity_type}</span>
+            <span class="badge ${badgeClass}">${typeName}</span>
         </div>`;
 
-    if (entity.aliases && entity.aliases.length) {
+    const aliases = entity.aliases || [];
+    if (aliases.length) {
         html += `<div class="detail-section">
             <h3>Aliases</h3>
-            <div class="value">${entity.aliases.join(', ')}</div>
+            <div class="detail-value">${aliases.join(', ')}</div>
         </div>`;
     }
 
-    if (entity.relations && entity.relations.length) {
-        html += `<div class="detail-section"><h3>Relations (${entity.relations.length})</h3>`;
-        entity.relations.forEach(r => {
+    if (relations.length) {
+        html += `<div class="detail-section"><h3>Relations (${relations.length})</h3>`;
+        relations.forEach(r => {
             const isSrc = r.source_entity_id === entity.id;
-            const other = isSrc ? r.target_name : r.source_name;
-            const otherType = isSrc ? r.target_type : r.source_type;
+            const other = isSrc ? (r.target_name || r.target) : (r.source_name || r.source);
+            const otherType = isSrc ? (r.target_type || 'concept') : (r.source_type || 'concept');
             const arrow = isSrc ? '→' : '←';
             html += `<div class="relation-item">
                 <span class="relation-arrow">${arrow}</span>
-                <strong>${r.relation_type}</strong>
-                <span class="badge badge-${otherType || 'concept'}">${other}</span>
+                <span class="relation-type">${r.relation_type || r.label || ''}</span>
+                <span class="badge badge-${otherType}">${other}</span>
             </div>`;
         });
         html += `</div>`;
     }
 
-    if (entity.linked_facts && entity.linked_facts.length) {
-        html += `<div class="detail-section"><h3>Linked Facts</h3>`;
-        entity.linked_facts.forEach(f => {
-            html += `<div class="fact-item">
-                <div class="fact-topic">${f.topic || 'general'}</div>
+    if (linkedFacts.length) {
+        html += `<div class="detail-section"><h3>Linked Facts (${linkedFacts.length})</h3>`;
+        linkedFacts.forEach(f => {
+            html += `<div class="fact-card-mini">
+                <div class="topic">${f.topic || 'general'}</div>
                 <div>${f.fact}</div>
-                <div class="fact-confidence">confidence: ${(f.confidence * 100).toFixed(0)}% · tier: ${f.tier || '—'}</div>
+                <div class="meta">confidence: ${((f.confidence || 0) * 100).toFixed(0)}% · tier: ${f.tier || '–'}</div>
             </div>`;
         });
         html += `</div>`;
+    }
+
+    if (mentions.length) {
+        html += `<div class="detail-section"><h3>Mentions (${mentions.length})</h3>
+            <div class="detail-value" style="font-size:11px; color:var(--text-muted)">${mentions.length} occurrence${mentions.length !== 1 ? 's' : ''} in memory</div>
+        </div>`;
     }
 
     content.innerHTML = html;
@@ -499,93 +1043,281 @@ document.getElementById('close-detail').addEventListener('click', () => {
     document.getElementById('detail-panel').classList.remove('visible');
 });
 
-// --- Search ---
+// ===== GRAPH SEARCH =====
 document.getElementById('search').addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase().trim();
-    if (!query) {
-        // Reset: pokaż wszystkie węzły
-        nodesDataset.forEach(n => {
-            nodesDataset.update({ id: n.id, opacity: 1.0, font: { color: '#e0e0e0' } });
-        });
+    const q = e.target.value.toLowerCase().trim();
+    if (!q) {
+        nodesDS.forEach(n => nodesDS.update({ id: n.id, opacity: 1.0, font: { color: '#e0e6f0' } }));
         return;
     }
-
     const matchIds = new Set();
     allNodes.forEach(n => {
-        const match = n.label.toLowerCase().includes(query) ||
-            (n.aliases || []).some(a => a.toLowerCase().includes(query));
-        if (match) matchIds.add(n.id);
+        if (n.label.toLowerCase().includes(q) ||
+            (n.aliases || []).some(a => a.toLowerCase().includes(q))) {
+            matchIds.add(n.id);
+        }
     });
-
-    nodesDataset.forEach(n => {
-        const isMatch = matchIds.has(n.id);
-        nodesDataset.update({
-            id: n.id,
-            opacity: isMatch ? 1.0 : 0.15,
-            font: { color: isMatch ? '#ffffff' : '#33445566' }
-        });
+    nodesDS.forEach(n => {
+        const hit = matchIds.has(n.id);
+        nodesDS.update({ id: n.id, opacity: hit ? 1.0 : 0.12, font: { color: hit ? '#ffffff' : '#1e2d4a' } });
     });
 });
 
-// --- Stats ---
-async function loadStats() {
+// ===== GRAPH CONTROLS =====
+document.getElementById('btn-fit').addEventListener('click', () => network?.fit({ animation: { duration: 400 } }));
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+    const s = network.getScale();
+    network.moveTo({ scale: s * 1.4, animation: { duration: 200 } });
+});
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+    const s = network.getScale();
+    network.moveTo({ scale: s / 1.4, animation: { duration: 200 } });
+});
+document.getElementById('btn-export').addEventListener('click', () => {
+    const canvas = document.getElementById('network').querySelector('canvas');
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `memory-graph-${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+});
+
+// ===== FACTS =====
+async function loadFacts() {
     try {
-        const resp = await fetch(`${API_BASE}/api/stats`);
-        const s = await resp.json();
-        document.getElementById('st-entities').textContent = s.entities || 0;
-        document.getElementById('st-relations').textContent = s.relations || 0;
-        document.getElementById('st-facts').textContent = s.facts || 0;
-        document.getElementById('st-entries').textContent = s.entries || 0;
-        document.getElementById('st-patterns').textContent = s.patterns || 0;
-        document.getElementById('refresh-time').textContent =
-            `Updated ${new Date().toLocaleTimeString()}`;
+        const data = await apiFetch('/api/facts');
+        allFacts = data.facts || [];
+        document.getElementById('facts-count').textContent = allFacts.length;
+
+        // Populate topic filter
+        const topics = [...new Set(allFacts.map(f => f.topic).filter(Boolean))].sort();
+        const sel = document.getElementById('topic-filter');
+        sel.innerHTML = '<option value="">All Topics</option>';
+        topics.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            sel.appendChild(opt);
+        });
+
+        renderFacts();
+        document.getElementById('facts-skeleton').classList.add('hidden');
     } catch (e) {
-        console.error('Failed to load stats:', e);
+        console.error('Facts load failed:', e);
+        document.getElementById('facts-skeleton').classList.add('hidden');
     }
 }
 
-// --- Timeline ---
+function renderFacts() {
+    let filtered = allFacts;
+    if (factTierFilter !== 'all') filtered = filtered.filter(f => f.tier === factTierFilter);
+    if (factTopicFilter) filtered = filtered.filter(f => f.topic === factTopicFilter);
+
+    filtered.sort((a, b) => {
+        const va = a[factSort.key] ?? '';
+        const vb = b[factSort.key] ?? '';
+        if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * factSort.dir;
+        return String(va).localeCompare(String(vb)) * factSort.dir;
+    });
+
+    const tbody = document.getElementById('facts-body');
+    tbody.innerHTML = filtered.map(f => {
+        const conf = f.confidence ?? 0;
+        const confPct = (conf * 100).toFixed(0);
+        const confClass = conf >= 0.7 ? 'conf-high' : conf >= 0.4 ? 'conf-mid' : 'conf-low';
+        const tierClass = f.tier === 'hot' ? 'tier-hot' : f.tier === 'warm' ? 'tier-warm' : 'tier-cold';
+        const tierIcon = f.tier === 'hot' ? '🔥' : f.tier === 'warm' ? '🟡' : '❄️';
+        const lastSeen = f.last_accessed_at ? timeAgo(new Date(f.last_accessed_at)) : '–';
+        const factText = f.fact || '';
+        const truncated = factText.length > 80;
+
+        return `<tr data-id="${f.id}">
+            <td style="white-space:nowrap; color:var(--accent); font-weight:500; font-size:11px">${esc(f.topic || '–')}</td>
+            <td><div class="fact-text ${truncated ? 'truncated' : ''}" title="${esc(factText)}">${esc(factText)}</div></td>
+            <td><div class="confidence-bar"><div class="confidence-fill ${confClass}" style="width:${confPct}%"></div></div> <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">${confPct}%</span></td>
+            <td><span class="tier-badge ${tierClass}">${tierIcon} ${f.tier || '–'}</span></td>
+            <td class="access-count">${f.strength ?? '–'}</td>
+            <td class="access-count">${f.access_count ?? 0}</td>
+            <td class="last-accessed">${lastSeen}</td>
+        </tr>`;
+    }).join('');
+
+    // Click to expand
+    tbody.querySelectorAll('tr').forEach(row => {
+        row.addEventListener('click', () => {
+            const textEl = row.querySelector('.fact-text');
+            if (textEl) {
+                textEl.classList.toggle('truncated');
+                row.classList.toggle('expanded');
+            }
+        });
+    });
+}
+
+// Tier filter buttons
+document.getElementById('tier-filters').addEventListener('click', (e) => {
+    const btn = e.target.closest('.filter-btn');
+    if (!btn) return;
+    document.querySelectorAll('#tier-filters .filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    factTierFilter = btn.dataset.tier;
+    renderFacts();
+});
+
+// Topic filter
+document.getElementById('topic-filter').addEventListener('change', (e) => {
+    factTopicFilter = e.target.value;
+    renderFacts();
+});
+
+// Sort headers
+document.querySelectorAll('.facts-table th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (factSort.key === key) {
+            factSort.dir *= -1;
+        } else {
+            factSort.key = key;
+            factSort.dir = -1;
+        }
+        document.querySelectorAll('.facts-table th .sort-arrow').forEach(s => s.textContent = '');
+        th.querySelector('.sort-arrow').textContent = factSort.dir === 1 ? '▲' : '▼';
+        renderFacts();
+    });
+});
+
+// ===== TIMELINE =====
 async function loadTimeline() {
     try {
-        const resp = await fetch(`${API_BASE}/api/timeline`);
-        const data = await resp.json();
+        const data = await apiFetch('/api/timeline');
+        allTimelineEvents = (data.events || []).filter(e => e.timestamp);
+        document.getElementById('timeline-count').textContent = allTimelineEvents.length;
 
-        const items = data.events
-            .filter(e => e.timestamp)
-            .map((e, i) => ({
-                id: i,
-                content: `<b>${e.topic || e.type}</b>: ${(e.content || '').substring(0, 80)}`,
-                start: new Date(e.timestamp),
-                type: 'box',
-                className: `event-${e.type}`
-            }));
+        const groups = new vis.DataSet();
+        const groupSet = new Set();
+        allTimelineEvents.forEach(e => {
+            const g = e.topic || e.source || 'other';
+            if (!groupSet.has(g)) {
+                groupSet.add(g);
+                groups.add({ id: g, content: g });
+            }
+        });
+
+        const items = new vis.DataSet(allTimelineEvents.map((e, i) => ({
+            id: i,
+            content: truncate(e.content || e.topic || '', 60),
+            start: new Date(e.timestamp),
+            group: e.topic || e.source || 'other',
+            type: 'box',
+            className: `event-${e.source || e.type || 'other'}`,
+            title: `${e.topic || ''}: ${truncate(e.content || '', 120)}`
+        })));
 
         const container = document.getElementById('timeline-container');
-        timeline = new vis.Timeline(container, new vis.DataSet(items), {
+        if (timeline) timeline.destroy();
+        timeline = new vis.Timeline(container, items, groups, {
             height: '100%',
             showCurrentTime: true,
-            zoomMin: 1000 * 60 * 60,        // 1 hour
-            zoomMax: 1000 * 60 * 60 * 24 * 90, // 90 days
+            zoomMin: 1000 * 60 * 60,
+            zoomMax: 1000 * 60 * 60 * 24 * 180,
             orientation: 'top',
             stack: true,
-            margin: { item: 4 }
+            margin: { item: 6, axis: 20 },
+            verticalScroll: true,
+            maxHeight: '100%'
         });
+
+        timeline.on('select', (props) => {
+            const detail = document.getElementById('timeline-detail');
+            if (!props.items.length) { detail.classList.remove('visible'); return; }
+            const evt = allTimelineEvents[props.items[0]];
+            if (!evt) return;
+            document.getElementById('td-topic').textContent = evt.topic || evt.type || 'Event';
+            document.getElementById('td-time').textContent = new Date(evt.timestamp).toLocaleString();
+            document.getElementById('td-content').textContent = evt.content || '';
+            detail.classList.add('visible');
+        });
+
+        document.getElementById('timeline-skeleton').classList.add('hidden');
     } catch (e) {
-        console.error('Failed to load timeline:', e);
+        console.error('Timeline load failed:', e);
+        document.getElementById('timeline-skeleton').classList.add('hidden');
     }
 }
 
-// --- Init ---
-initNetwork();
-loadGraph();
-loadStats();
+// ===== KEYBOARD SHORTCUTS =====
+document.addEventListener('keydown', (e) => {
+    // Skip if inside an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
+        if (e.key === 'Escape') e.target.blur();
+        return;
+    }
 
-// Auto-refresh co 30 sekund
+    switch (e.key) {
+        case '1': switchTab('graph'); break;
+        case '2': switchTab('facts'); break;
+        case '3': switchTab('timeline'); break;
+        case 'r': case 'R': refreshAll(); break;
+        case 'f': case 'F':
+            if (network) network.fit({ animation: { duration: 400 } });
+            break;
+        case '/':
+            e.preventDefault();
+            document.getElementById('search').focus();
+            break;
+        case 'Escape':
+            document.getElementById('detail-panel').classList.remove('visible');
+            document.getElementById('timeline-detail').classList.remove('visible');
+            break;
+    }
+});
+
+// ===== REFRESH =====
+async function refreshAll() {
+    const btn = document.getElementById('btn-refresh');
+    btn.classList.add('spinning');
+    try {
+        await Promise.all([loadStats(), loadGraph()]);
+        if (allFacts.length > 0) await loadFacts();
+        if (timeline) await loadTimeline();
+    } finally {
+        setTimeout(() => btn.classList.remove('spinning'), 500);
+    }
+}
+
+document.getElementById('btn-refresh').addEventListener('click', refreshAll);
+
+// ===== HELPERS =====
+function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function truncate(str, len) {
+    return str.length > len ? str.slice(0, len) + '…' : str;
+}
+
+function timeAgo(date) {
+    const secs = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (secs < 60) return 'just now';
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    if (secs < 604800) return `${Math.floor(secs / 86400)}d ago`;
+    return date.toLocaleDateString();
+}
+
+// ===== INIT =====
+initNetwork();
+loadStats();
+loadGraph();
+
 setInterval(() => {
-    loadGraph();
     loadStats();
+    loadGraph();
+    if (allFacts.length > 0) loadFacts();
     if (timeline) loadTimeline();
-}, REFRESH_INTERVAL);
+}, REFRESH_MS);
 </script>
 </body>
 </html>
