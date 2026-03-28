@@ -4,7 +4,6 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-User=tank
 WorkingDirectory=/home/tank/.openclaw/extensions/memory-unified/dashboard
 Environment=DATABASE_URL=postgresql://openclaw:OpenClaw2026!@localhost:5432/openclaw_platform
 Environment=PORT=8091

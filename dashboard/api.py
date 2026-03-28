@@ -8,13 +8,20 @@ Port: 8091
 import os
 import json
 from datetime import datetime
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
 
-app = Flask(__name__)
+DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, static_folder=DASHBOARD_DIR)
 CORS(app)
+
+
+@app.route("/")
+def serve_dashboard():
+    """Serve the dashboard HTML at root."""
+    return send_from_directory(DASHBOARD_DIR, "index.html")
 
 DB_URL = os.environ.get(
     "DATABASE_URL",
