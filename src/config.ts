@@ -3,7 +3,7 @@
  */
 
 const DEFAULT_DB_PATH = "skill-memory.db";
-const ALLOWED_KEYS = ["dbPath", "backend", "postgresUrl", "ragSlim", "logToolCalls", "logToolCallsFilter", "trajectoryTracking", "ragTopK", "memoryBank", "embeddingDim", "embeddingModel", "rerankUrl", "rerankEnabled"];
+const ALLOWED_KEYS = ["dbPath", "backend", "postgresUrl", "embeddingUrl", "ragSlim", "logToolCalls", "logToolCallsFilter", "trajectoryTracking", "ragTopK", "memoryBank", "embeddingDim", "embeddingModel", "rerankUrl", "rerankEnabled"];
 
 export interface UnifiedMemoryConfig {
   dbPath: string;
@@ -14,6 +14,7 @@ export interface UnifiedMemoryConfig {
   logToolCallsFilter: "all" | "none" | "whitelist" | string[];  // "all" = log everything, "none" = log nothing, "whitelist" = built-in, string[] = custom
   trajectoryTracking: boolean;
   ragTopK: number;
+  embeddingUrl: string;
   embeddingDim: number;
   embeddingModel: string;
   rerankUrl: string;
@@ -62,6 +63,7 @@ export const unifiedConfigSchema = {
         logToolCallsFilter: "whitelist",
         trajectoryTracking: true,
         ragTopK: 5,
+        embeddingUrl: "http://localhost:8080/v1/embeddings",
         embeddingDim: 4096,
         embeddingModel: "Qwen/Qwen3-Embedding-8B",
         rerankUrl: "http://localhost:8082/rerank",
@@ -118,6 +120,7 @@ export const unifiedConfigSchema = {
       logToolCallsFilter,
       trajectoryTracking: cfg.trajectoryTracking !== false,
       ragTopK,
+      embeddingUrl: typeof cfg.embeddingUrl === "string" ? cfg.embeddingUrl : "http://localhost:8080/v1/embeddings",
       embeddingDim: typeof cfg.embeddingDim === "number" ? cfg.embeddingDim : 4096,
       embeddingModel: typeof cfg.embeddingModel === "string" ? cfg.embeddingModel : "Qwen/Qwen3-Embedding-8B",
       rerankUrl: typeof cfg.rerankUrl === "string" ? cfg.rerankUrl : "http://localhost:8082/rerank",
