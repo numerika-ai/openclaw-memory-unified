@@ -173,12 +173,12 @@ export function createRagInjectionHook(deps: HookDependencies) {
       // ============================================================
       // RERANKING
       // ============================================================
-      if (cfg.rerankEnabled && sorted.length > 5) {
+      if (cfg.rerankEnabled && sorted.length > 2) {
         try {
           const rerankCands: RerankCandidate[] = sorted
             .filter(({ candidate: c }) => c.type !== "skill" || !matchedProcedure)
             .map(({ candidate: c }, i) => ({ id: i, text: c.text, score: 0 }));
-          if (rerankCands.length > 5) {
+          if (rerankCands.length > 2) {
             const reranked = await rerankResults(prompt, rerankCands, 5);
             if (reranked.length > 0) {
               const keep = slimLines.filter(l => l.startsWith("[SKILL") || l.startsWith("[history]") || l.startsWith("[feedback]") || l.startsWith("[recent]") || l.startsWith("[entity]"));
