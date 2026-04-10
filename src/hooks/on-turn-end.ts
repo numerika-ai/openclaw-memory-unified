@@ -80,8 +80,11 @@ export function createToolCallLogHook(deps: HookDependencies) {
       const result = (event.result ?? event.output ?? "") as string;
       const error = (event.error ?? event.err) as string | undefined;
 
-      // Skip our own tools and internal tools
-      if (toolName.startsWith("skill_") || toolName.startsWith("unified_") || toolName === "artifact_register") return;
+      // Skip our own tools and internal tools.
+      // Allow whitelisted unified_* tools (unified_store/search/reflect carry user intent
+      // and were in TOOL_LOG_WHITELIST but silently dropped before this guard).
+      if (toolName.startsWith("skill_") || toolName === "artifact_register") return;
+      if (toolName.startsWith("unified_") && !TOOL_LOG_WHITELIST.has(toolName)) return;
       if (toolName === "unknown") return;
 
       // Smart filtering: only log whitelisted tools (95% noise reduction)
@@ -129,6 +132,9 @@ export function createAgentEndHook(deps: HookDependencies) {
   return async function(api: PluginApi, event: Record<string, unknown>) {
     // Always clear dynamic tool policy — prevent stale policies across turns
     (globalThis as any).__openclawDynamicToolPolicy = undefined;
+
+    const gg = globalThis as any;
+    const sessionKey = (event.sessionKey as string | undefined) ?? "unknown";
 
     try {
       const success = event.success !== false;
@@ -209,11 +215,16 @@ export function createAgentEndHook(deps: HookDependencies) {
         }
       }
 
+      // Resolve turnPrompt — prefer local memoryState, fall back to globalThis
+      // session-keyed map (set by rag-injection; survives cross-context plugin instances).
+      const turnPromptFromGlobal = gg.__openclawTurnPromptBySession?.[sessionKey];
+      const resolvedTurnPrompt = memoryState.turnPrompt || turnPromptFromGlobal || "";
+
       // ============================================================
       // CONVERSATION TRACKING (Phase 5)
       // ============================================================
       try {
-        const convPrompt = memoryState.turnPrompt || "";
+        const convPrompt = resolvedTurnPrompt;
         const convResponse = responsePreview || "";
 
         if (convPrompt.length > 20) {
@@ -306,7 +317,7 @@ export function createAgentEndHook(deps: HookDependencies) {
       // ============================================================
       if (memoryBankConfig?.enabled) {
         try {
-          const mbPrompt = memoryState.turnPrompt || "";
+          const mbPrompt = resolvedTurnPrompt;
           const mbResponse = responsePreview || "";
           const conversationText = `User: ${mbPrompt}\nAssistant: ${mbResponse}`;
 
@@ -354,6 +365,10 @@ export function createAgentEndHook(deps: HookDependencies) {
       memoryState.agentId = null;
       (globalThis as any).__openclawAgentId = undefined;
       (globalThis as any).__openclawSessionKey = undefined;
+      // Also clean the session-keyed turnPrompt map to avoid stale carry-over.
+      if (gg.__openclawTurnPromptBySession && sessionKey) {
+        delete gg.__openclawTurnPromptBySession[sessionKey];
+      }
     }
   };
 }
